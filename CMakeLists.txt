@@ -6,7 +6,7 @@ if (POLICY CMP0042)
     cmake_policy (SET CMP0042 NEW)
 endif ()
 
-add_library(rbenchmark SHARED src/benchmark.cpp)
+add_library(rbenchmark STATIC src/benchmark.cpp)
 target_include_directories(rbenchmark PUBLIC "include")
 
 set_target_properties(rbenchmark PROPERTIES
