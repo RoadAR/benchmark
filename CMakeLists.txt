@@ -6,8 +6,6 @@ if (POLICY CMP0042)
     cmake_policy (SET CMP0042 NEW)
 endif ()
 
-
-SET(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} "-pthread")
 add_library(rbenchmark SHARED src/benchmark.cpp)
 
 set_target_properties(rbenchmark PROPERTIES
