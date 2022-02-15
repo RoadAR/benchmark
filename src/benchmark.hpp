@@ -8,26 +8,27 @@
 #include <string>
 
 
-namespace roadar {
-
 //! Шаблон для бенчмарк-теста производительности.
-#define BENCHMARK(__identifier)                                  \
-  for (bool finished = !benchmarkStart(__identifier); !finished; \
-       finished = true, benchmarkStop(__identifier))
+#define ROADAR_BENCHMARK(__identifier)                                  \
+  for (bool finished = !roadar::benchmarkStart(__identifier); !finished; \
+    finished = true, roadar::benchmarkStop(__identifier))
+
+
+namespace roadar {
 
 /*!
  * \brief Начало бенчмарка.
  * \param[in] identifier Идентификатор.
  * \return Флаг успешного завершения метода.
  */
-    bool benchmarkStart(const std::string &identifier);
+  bool benchmarkStart(const std::string &identifier);
 
 /*!
  * \brief Конец бенчмарка.
  * \param[in] identifier Идентификатор.
  * \return Флаг успешного завершения метода.
  */
-    bool benchmarkStop(const std::string &identifier);
+  bool benchmarkStop(const std::string &identifier);
 
 /*!
  * \brief Бенчмарк-лог.
@@ -35,5 +36,14 @@ namespace roadar {
  * \return Текст лога.
  */
     std::string benchmarkLog();
+
+
+  class ScopedBenchmark {
+  public:
+    explicit ScopedBenchmark(const std::string& identifier);
+    ~ScopedBenchmark();
+  private:
+    std::string m_identifier;
+  };
 
 } // namespace RoadAR

@@ -6,6 +6,7 @@
 #include <mutex>
 #include <vector>
 #include <sstream>
+#include <thread>
 
 
 #ifndef _WIN32
@@ -16,11 +17,6 @@
 #define CAPTURE_LAST_N_TIMES 10
 #endif
 
-
-#ifndef BENCHMARK_DISABLE_MULTITHREAD
-#define MULTITHREAD
-#endif
-
 #ifndef BENCHMARK_DISABLE_AUTONESTING
 #define AUTONESTING
 #endif
@@ -29,9 +25,6 @@
 #define USE_BENCHMARK
 #endif
 
-#ifdef MULTITHREAD
-#include <thread>
-#endif
 
 // -------------------------------------------------
 
@@ -39,7 +32,6 @@ namespace roadar {
 
 #ifdef AUTONESTING
 // Мультипоточка всегда включена для автоматического включения замеров к родителю
-#define MULTITHREAD
 static const std::string kNestingString = " ";
 #endif
 
@@ -76,7 +68,6 @@ struct MesurmentGroup {
     map = val.map;
   };
   unordered_map<string, MeasurmentInfo> map = {};
-  mutex mut = {};
 #ifdef AUTONESTING
   string parentKey;
 #endif
@@ -92,31 +83,22 @@ inline bool stringHasPrefix(const std::string &str, const std::string &prefix) {
   return res.first == prefix.end();
 }
 
-#ifdef MULTITHREAD
 static unordered_map<size_t, MesurmentGroup> measurmentThreadMap;
-#else
-static MesurmentGroup measurmentGroup;
-#endif
 static mutex mut;
 
 inline MesurmentGroup &getMeasurmentGroup() {
-#ifdef MULTITHREAD
   size_t tid = std::hash<std::thread::id>()(std::this_thread::get_id());
   lock_guard<mutex> lock(mut);
   if (measurmentThreadMap.count(tid) == 0) {
       measurmentThreadMap.emplace(tid, MesurmentGroup());
   }
   return measurmentThreadMap[tid];
-#else
-  return measurmentGroup;
-#endif
 }
 
 bool benchmarkStart(const string &identifier) {
 #ifdef USE_BENCHMARK
 
   auto &measurmentGroup = getMeasurmentGroup();
-  lock_guard<mutex> lock(measurmentGroup.mut);
   auto &measurmentMap = measurmentGroup.map;
 #ifdef AUTONESTING
 //  переопределяем identifier, чтобы не делать при ненадобности его копию
@@ -145,7 +127,6 @@ bool benchmarkStart(const string &identifier) {
 bool benchmarkStop(const string &identifier) {
 #ifdef USE_BENCHMARK
   auto &measurmentGroup = getMeasurmentGroup();
-  lock_guard<mutex> lock(measurmentGroup.mut);
   auto &measurmentMap = measurmentGroup.map;
   
 #ifdef AUTONESTING
@@ -282,14 +263,12 @@ void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipP
 
 unordered_map<string, MeasurmentInfo> unionMeasurments() {
 //  объеденяем все замеры в один результат
-#ifdef MULTITHREAD
   if (measurmentThreadMap.empty()) {
     return {};
   }
   unordered_map<string, MeasurmentInfo> res;
   for (auto &threadMeasurments : measurmentThreadMap) {
     auto &measurmentsMap = threadMeasurments.second;
-    lock_guard<mutex> tidLock(measurmentsMap.mut);
     if (res.empty()) {
       res = measurmentsMap.map;
     } else {
@@ -306,9 +285,6 @@ unordered_map<string, MeasurmentInfo> unionMeasurments() {
   }
   
   return res;
-#else
-  return measurmentGroup.map;
-#endif
 }
 
 string formGrid(const vector<vector<string>> &rows) {
@@ -410,5 +386,12 @@ string benchmarkLog() {
 #endif
 }
 
+ScopedBenchmark::ScopedBenchmark(const std::string& identifier): m_identifier(identifier) {
+  benchmarkStart(identifier);
+};
+
+ScopedBenchmark::~ScopedBenchmark() {
+  benchmarkStop(m_identifier);
+}
 
 } // namespace RoadAR
