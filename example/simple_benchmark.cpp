@@ -6,7 +6,7 @@
 #include <iostream>
 #include <chrono>
 #include <thread>
-#include "benchmark.hpp"
+#include <roadar/benchmark.hpp>
 
 //using namespace roadar;
 

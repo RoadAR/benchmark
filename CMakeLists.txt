@@ -7,11 +7,12 @@ if (POLICY CMP0042)
 endif ()
 
 add_library(rbenchmark SHARED src/benchmark.cpp)
+target_include_directories(rbenchmark PUBLIC "include")
 
 set_target_properties(rbenchmark PROPERTIES
         VERSION 1.0
         SOVERSION 1
-        PUBLIC_HEADER src/benchmark.hpp)
+        PUBLIC_HEADER include/roadar/benchmark.hpp)
 
 install(TARGETS rbenchmark
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
