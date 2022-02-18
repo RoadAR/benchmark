@@ -17,11 +17,11 @@
 #define CAPTURE_LAST_N_TIMES 10
 #endif
 
-#ifndef BENCHMARK_DISABLE_AUTONESTING
+#if BENCHMARK_DISABLE_AUTONESTING
 #define AUTONESTING
 #endif
 
-#ifndef BENCHMARK_DISABLE
+#if BENCHMARK_DISABLE
 #define USE_BENCHMARK
 #endif
 
@@ -31,8 +31,7 @@
 namespace roadar {
 
 #ifdef AUTONESTING
-// Мультипоточка всегда включена для автоматического включения замеров к родителю
-static const std::string kNestingString = " ";
+static const std::string kNestingString = " » ";
 #endif
 
 
@@ -73,6 +72,33 @@ struct MesurmentGroup {
 #endif
 };
 
+class ErrorMsg {
+public:
+  ErrorMsg() = default;
+  void update(const std::string &msg, const string &file, int line) {
+    lock_guard<mutex> lock(mut_);
+    if (msg_.empty()) {
+      msg_ = msg;
+      if (!file.empty()) {
+        msg_ += "\nLocation: " + string(file) + " > line: " + to_string(line);
+      }
+    }
+  }
+
+  bool popError(std::string &outMsg) {
+    lock_guard<mutex> lock(mut_);
+    if (msg_.empty()) {
+      return false;
+    }
+    outMsg = msg_;
+    msg_ = "";
+    return true;
+  }
+private:
+  mutex mut_;
+  string msg_;
+};
+
 inline bool stringHasSuffix(std::string const &value, std::string const &suffix) {
     if (suffix.size() > value.size()) return false;
     return std::equal(suffix.rbegin(), suffix.rend(), value.rbegin());
@@ -85,6 +111,7 @@ inline bool stringHasPrefix(const std::string &str, const std::string &prefix) {
 
 static unordered_map<size_t, MesurmentGroup> measurmentThreadMap;
 static mutex mut;
+static ErrorMsg errorMsg;
 
 inline MesurmentGroup &getMeasurmentGroup() {
   size_t tid = std::hash<std::thread::id>()(std::this_thread::get_id());
@@ -95,19 +122,19 @@ inline MesurmentGroup &getMeasurmentGroup() {
   return measurmentThreadMap[tid];
 }
 
-bool benchmarkStart(const string &identifier) {
+bool benchmarkStart(const string &identifier, const string &file, int line) {
 #ifdef USE_BENCHMARK
 
   auto &measurmentGroup = getMeasurmentGroup();
   auto &measurmentMap = measurmentGroup.map;
 #ifdef AUTONESTING
-//  переопределяем identifier, чтобы не делать при ненадобности его копию
-//  опасненько, но делаем это аккуртно
   if (measurmentGroup.parentKey.empty()) {
     measurmentGroup.parentKey += identifier;
   } else {
     measurmentGroup.parentKey += kNestingString + identifier;
   }
+//  переопределяем identifier, чтобы не делать при ненадобности его копию
+//  опасненько, но делаем это аккуртно
 #define identifier measurmentGroup.parentKey
 #endif
   
@@ -115,8 +142,10 @@ bool benchmarkStart(const string &identifier) {
     measurmentMap[identifier] = {};
 
   MeasurmentInfo &info = measurmentMap[identifier];
-  if (info.lastStartTime)
+  if (info.lastStartTime) {
+    errorMsg.update("Benchmark already run for \"" + identifier + "\" key", file, line);
     return false;
+  }
 
 #undef identifier
   info.lastStartTime = get_timestamp();
@@ -124,7 +153,21 @@ bool benchmarkStart(const string &identifier) {
   return true;
 }
 
-bool benchmarkStop(const string &identifier) {
+#ifdef AUTONESTING
+void failWrongNestingKey(const std::string &fullPath, const std::string &idetifier, const string &file, int line) {
+  auto keyFromIdx = fullPath.find_last_of(kNestingString);
+  std::string lastKeyPath;
+  if (keyFromIdx == string::npos) {
+    lastKeyPath = fullPath;
+  } else {
+    lastKeyPath = fullPath.substr(keyFromIdx+1);
+  }
+  string msg = "benchmarkStop(\"" + idetifier + "\") not matched with last key \"" + lastKeyPath + "\"";
+  errorMsg.update(msg, file, line);
+}
+#endif
+
+bool benchmarkStop(const string &identifier, const string &file, int line) {
 #ifdef USE_BENCHMARK
   auto &measurmentGroup = getMeasurmentGroup();
   auto &measurmentMap = measurmentGroup.map;
@@ -132,15 +175,22 @@ bool benchmarkStop(const string &identifier) {
 #ifdef AUTONESTING
 //  переопределяем identifier, чтобы не делать при ненадобности его копию
 //  опасненько, но делаем это аккуртно
-  assert(stringHasSuffix(measurmentGroup.parentKey, identifier) && "Остановка бенчмарка для другого ключа");
+  if (!stringHasSuffix(measurmentGroup.parentKey, identifier)) {
+    failWrongNestingKey(measurmentGroup.parentKey, identifier, file, line);
+    return false;
+  }
 #define identifier measurmentGroup.parentKey
 #endif
   
-  if (measurmentMap.count(identifier) == 0)
+  if (measurmentMap.count(identifier) == 0) {
+    errorMsg.update("Internal error. Missing \"" + identifier + "\" key", file, line);
     return false;
+  }
   MeasurmentInfo &info = measurmentMap[identifier];
-  if (info.lastStartTime == 0)
+  if (info.lastStartTime == 0) {
+    errorMsg.update("Benchmark for \"" + identifier + "\" key not started", file, line);
     return false;
+  }
 
 #ifdef AUTONESTING
 #undef identifier
@@ -156,6 +206,35 @@ bool benchmarkStop(const string &identifier) {
   info.startNTimesIdx++;
 #endif
   return true;
+}
+
+void benchmarkReset() {
+#ifdef USE_BENCHMARK
+  lock_guard<mutex> lock(mut);
+  for (auto &kv : measurmentThreadMap) {
+    for (auto it = kv.second.map.begin(); it != kv.second.map.end(); ) {
+      if (it->second.lastStartTime == 0) {
+        // reset info for non finished benchmarks
+        auto lastStartTime = it->second.lastStartTime;
+        it->second = MeasurmentInfo();
+        it->second.lastStartTime = lastStartTime;
+        it = kv.second.map.erase(it);
+      } else {
+        // remove all finished benchmarks
+        ++it;
+      }
+    }
+  }
+
+  for (auto it = measurmentThreadMap.begin(); it != measurmentThreadMap.end(); ) {
+    if (it->second.map.empty()) {
+      // no measurments for thread, cleanup
+      it = measurmentThreadMap.erase(it);
+    } else {
+      ++it;
+    }
+  }
+#endif
 }
 
 // Out measurments
@@ -219,7 +298,11 @@ void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipP
   for (int i = 0; i < count; i++) {
     string name = measureVector[i].first;
     if (skipPrefix && parents[i] >= 0) {
-      name = name.substr(origNames[parents[i]].size());
+      size_t from = origNames[parents[i]].size();
+#ifdef AUTONESTING
+      from += kNestingString.size();
+#endif
+      name = name.substr(from);
     }
 
     for (int j = 0; j < levels[i]; j++)
@@ -322,6 +405,15 @@ inline string formatString(stringstream &ss, T val) {
 
 string benchmarkLog() {
 #ifdef USE_BENCHMARK
+  string errorMsgString;
+  if (errorMsg.popError(errorMsgString)) {
+    string msg = "\n=============== Benchmark Error ===============\n";
+    msg += errorMsgString;
+    msg += "\n===============================================\n";
+    benchmarkReset();
+    return msg;
+  }
+
   vector<pair<string, MeasurmentInfo>> measureVector;
   {
     lock_guard<mutex> lock(mut);
@@ -372,7 +464,7 @@ string benchmarkLog() {
     row.emplace_back(formatString(ss, lastTimes / 1000.));
 
     ss << setprecision(1) << fixed;
-    row.emplace_back("  percent:");
+    row.emplace_back("   percent:");
     row.emplace_back(formatString(ss, int(percent * 1000)/10.) + " %");
 
     rows.push_back(move(row));
@@ -387,11 +479,23 @@ string benchmarkLog() {
 }
 
 ScopedBenchmark::ScopedBenchmark(const std::string& identifier): m_identifier(identifier) {
+#ifdef USE_BENCHMARK
   benchmarkStart(identifier);
+#endif
 };
 
-ScopedBenchmark::~ScopedBenchmark() {
+void ScopedBenchmark::reset(const std::string& newIdentifier) {
+#ifdef USE_BENCHMARK
   benchmarkStop(m_identifier);
+  m_identifier = newIdentifier;
+  benchmarkStart(m_identifier);
+#endif
+}
+
+ScopedBenchmark::~ScopedBenchmark() {
+#ifdef USE_BENCHMARK
+  benchmarkStop(m_identifier);
+#endif
 }
 
 } // namespace RoadAR

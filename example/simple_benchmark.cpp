@@ -15,35 +15,36 @@ inline void sleep_ms(long long val) {
 }
 
 void algorithm1() {
-  roadar::benchmarkStart("algo_1");
+  RBENCHMARK_START("algo_1");
   for (int i = 0; i < 10; i++) {
-    roadar::benchmarkStart("step_1_1");
+    roadar::ScopedBenchmark bench("step_1_1");
     sleep_ms(10);
-    roadar::benchmarkStop("step_1_1");
+    bench.reset("step_1_2");
+    sleep_ms(5);
   }
 
   for (int i = 0; i < 10; i++) {
     roadar::ScopedBenchmark bench("scoped");
-    roadar::benchmarkStart("step_1_2");
-    ROADAR_BENCHMARK("part_1") {
+    RBENCHMARK_START("step_1_2");
+    RBENCHMARK("part_1") {
       sleep_ms(15);
     }
-    ROADAR_BENCHMARK("part_2") {
+    RBENCHMARK("part_2") {
       sleep_ms(15);
     }
-    roadar::benchmarkStop("step_1_2");
+    RBENCHMARK_STOP("step_1_2");
   }
-  roadar::benchmarkStop("algo_1");
+  RBENCHMARK_STOP("algo_1");
 }
 
 void algorithm2() {
-  roadar::benchmarkStart("algo_2");
+  RBENCHMARK_START("algo_2");
   for (int i = 0; i < 50; i++) {
-    roadar::benchmarkStart("step_2_1");
+    RBENCHMARK_START("step_2_1");
     sleep_ms((long long)i);
-    roadar::benchmarkStop("step_2_1");
+    RBENCHMARK_STOP("step_2_1");
   }
-  roadar::benchmarkStop("algo_2");
+  RBENCHMARK_STOP("algo_2");
 }
 
 int main(int argc, const char * argv[]) {
@@ -58,7 +59,7 @@ int main(int argc, const char * argv[]) {
   t3.join();
   t4.join();
   t5.join();
-  roadar::benchmarkStart("test not finished");
+  RBENCHMARK_START("test not finished");
   sleep_ms(10);
 
   std::cout << "Done" << std::endl;
