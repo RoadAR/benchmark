@@ -34,6 +34,7 @@ void algorithm1() {
     }
     RBENCHMARK_STOP("step_1_2");
   }
+  sleep_ms(25); // missed
   RBENCHMARK_STOP("algo_1");
 }
 

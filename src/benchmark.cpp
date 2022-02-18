@@ -17,11 +17,11 @@
 #define CAPTURE_LAST_N_TIMES 10
 #endif
 
-#if BENCHMARK_DISABLE_AUTONESTING
+#ifndef BENCHMARK_DISABLE_AUTONESTING
 #define AUTONESTING
 #endif
 
-#if BENCHMARK_DISABLE
+#ifndef BENCHMARK_DISABLE
 #define USE_BENCHMARK
 #endif
 
@@ -55,6 +55,7 @@ static timestamp_t get_timestamp() {
  */
 struct MeasurmentInfo {
   double totalTime = 0;
+  double childrenTime = 0;
   unsigned long timesExecuted = 0;
   timestamp_t lastStartTime = 0;
   double lastNTimes[CAPTURE_LAST_N_TIMES] = {};
@@ -303,6 +304,7 @@ void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipP
       from += kNestingString.size();
 #endif
       name = name.substr(from);
+      measureVector[parents[i]].second.childrenTime += measureVector[i].second.totalTime;
     }
 
     for (int j = 0; j < levels[i]; j++)
@@ -440,6 +442,7 @@ string benchmarkLog() {
     row.push_back(k.first + ":");
 
     double totalTime = k.second.totalTime;
+    double childrenTime = k.second.childrenTime;
     unsigned long timesExecuted = k.second.timesExecuted;
 
     double lastTimesTotal = 0;
@@ -452,6 +455,7 @@ string benchmarkLog() {
     double lastTimes = avaiableLastMeasurmentCount == 0 ? 0.0 : (lastTimesTotal / (double)avaiableLastMeasurmentCount);
     double avg = timesExecuted == 0 ? 0.0 : (totalTime / (double)timesExecuted);
     double percent = totalExecutionTime == 0 ? 0 : totalTime / totalExecutionTime;
+    double missed = (totalExecutionTime == 0 || childrenTime == 0) ? 0 : max(0.0, totalTime - childrenTime) / totalExecutionTime;
 
     ss << setprecision(2) << fixed;
     row.emplace_back("   total:");
@@ -466,6 +470,9 @@ string benchmarkLog() {
     ss << setprecision(1) << fixed;
     row.emplace_back("   percent:");
     row.emplace_back(formatString(ss, int(percent * 1000)/10.) + " %");
+
+    row.emplace_back("   missed:");
+    row.emplace_back(formatString(ss, int(missed * 1000)/10.) + " %");
 
     rows.push_back(move(row));
   }
