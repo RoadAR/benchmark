@@ -6,8 +6,17 @@ if (POLICY CMP0042)
     cmake_policy (SET CMP0042 NEW)
 endif ()
 
+option(BUILD_EXAMPLE "Build example usage" OFF)
+option(BENCHMARK_DISABLE "Disable benchmarking" OFF)
+option(BENCHMARK_DISABLE_AUTONESTING "If enabled you need to write write idetifier with parent prefix" OFF)
+
+add_compile_definitions($<$<BOOL:${BENCHMARK_DISABLE}>:BENCHMARK_DISABLE>)
+add_compile_definitions($<$<BOOL:${BENCHMARK_DISABLE_AUTONESTING}>:BENCHMARK_DISABLE_AUTONESTING>)
+
+
 add_library(rbenchmark STATIC src/benchmark.cpp)
 target_include_directories(rbenchmark PUBLIC "include")
+
 
 set_target_properties(rbenchmark PROPERTIES
         VERSION 1.0
@@ -19,7 +28,6 @@ install(TARGETS rbenchmark
         PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 
-option(BUILD_EXAMPLE "Build example usage" OFF)
 
 if (BUILD_EXAMPLE)
     add_executable(example example/simple_benchmark.cpp)

@@ -34,7 +34,9 @@ void algorithm1() {
     }
     RBENCHMARK_STOP("step_1_2");
   }
-  sleep_ms(25); // missed
+  // this will be not captured by children `algo_1`
+  // so you will see in missed percent
+  sleep_ms(25);
   RBENCHMARK_STOP("algo_1");
 }
 
@@ -64,6 +66,6 @@ int main(int argc, const char * argv[]) {
   sleep_ms(10);
 
   std::cout << "Done" << std::endl;
-  std::cout << roadar::benchmarkLog() << std::endl;
+  std::cout << roadar::benchmarkLog(roadar::Field::lastAverage) << std::endl;
   return 0;
 }

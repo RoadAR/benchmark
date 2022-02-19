@@ -405,7 +405,7 @@ inline string formatString(stringstream &ss, T val) {
   return ss.str();
 }
 
-string benchmarkLog() {
+string benchmarkLog(Field withoutFields) {
 #ifdef USE_BENCHMARK
   string errorMsgString;
   if (errorMsg.popError(errorMsgString)) {
@@ -458,21 +458,32 @@ string benchmarkLog() {
     double missed = (totalExecutionTime == 0 || childrenTime == 0) ? 0 : max(0.0, totalTime - childrenTime) / totalExecutionTime;
 
     ss << setprecision(2) << fixed;
-    row.emplace_back("   total:");
-    row.emplace_back(formatString(ss, totalTime / 1000.));
-    row.emplace_back("   times:");
-    row.emplace_back(formatString(ss, timesExecuted));
-    row.emplace_back("   avg:");
-    row.emplace_back(formatString(ss, avg / 1000.));
-    row.emplace_back("   last avg:");
-    row.emplace_back(formatString(ss, lastTimes / 1000.));
+    if (!static_cast<bool>(withoutFields & Field::total)) {
+      row.emplace_back("   total:");
+      row.emplace_back(formatString(ss, totalTime / 1000.));
+    }
+    if (!static_cast<bool>(withoutFields & Field::times)) {
+      row.emplace_back("   times:");
+      row.emplace_back(formatString(ss, timesExecuted));
+    }
+    if (!static_cast<bool>(withoutFields & Field::average)) {
+      row.emplace_back("   avg:");
+      row.emplace_back(formatString(ss, avg / 1000.));
+    }
+    if (!static_cast<bool>(withoutFields & Field::lastAverage)) {
+      row.emplace_back("   last avg:");
+      row.emplace_back(formatString(ss, lastTimes / 1000.));
+    }
 
     ss << setprecision(1) << fixed;
-    row.emplace_back("   percent:");
-    row.emplace_back(formatString(ss, int(percent * 1000)/10.) + " %");
-
-    row.emplace_back("   missed:");
-    row.emplace_back(formatString(ss, int(missed * 1000)/10.) + " %");
+    if (!static_cast<bool>(withoutFields & Field::percent)) {
+      row.emplace_back("   percent:");
+      row.emplace_back(formatString(ss, int(percent * 1000) / 10.) + " %");
+    }
+    if (!static_cast<bool>(withoutFields & Field::percentMissed)) {
+      row.emplace_back("   missed:");
+      row.emplace_back(formatString(ss, int(missed * 1000) / 10.) + " %");
+    }
 
     rows.push_back(move(row));
   }
