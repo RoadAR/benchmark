@@ -54,7 +54,7 @@ std::cout << roadar::benchmarkLog() << std::endl;
 ## Сборка
 ```
 cmake -H. -Bbuild;
-cmake --build build -- -j4;
+cmake --build build;
 ```
 Опции `CMake`:
 - `-DBUILD_EXAMPLE=ON` - сборка примера вместе с библиотекой
