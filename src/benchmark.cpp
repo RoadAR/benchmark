@@ -7,10 +7,12 @@
 #include <vector>
 #include <sstream>
 #include <thread>
-
+#include <iomanip>
 
 #ifndef _WIN32
 #include <sys/time.h>
+#else
+#include <chrono>
 #endif
 
 #ifndef CAPTURE_LAST_N_TIMES
@@ -45,8 +47,8 @@ static timestamp_t get_timestamp() {
   gettimeofday(&now, nullptr);
   return now.tv_usec + (timestamp_t)now.tv_sec * 1000000;
 #else
-  return duration_cast<microseconds>(steady_clock::now().time_since_epoch())
-        .count();
+  return chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now().time_since_epoch())
+      .count();
 #endif
 }
 
