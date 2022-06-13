@@ -53,7 +53,7 @@ std::cout << roadar::benchmarkLog() << std::endl;
 // при желании для каждого треда можно указать имя для удобного просмотра
 R_TRACING_THREAD_NAME("Video read thread");
 
-// при начале участка когда хотим сохранить tracing вызовов
+// при начале интересного нам участка
 R_TRACING_START("../tracing.json");
 // обязательно вызываем под конец, происходит запись в файл
 R_TRACING_STOP();
