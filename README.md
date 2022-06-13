@@ -58,7 +58,8 @@ R_TRACING_START("../tracing.json");
 // обязательно вызываем под конец, происходит запись в файл
 R_TRACING_STOP();
 ```
-<img src="readme_images/tracing.png" alt="Demo" width="700" />
+Визуализация трейсинга:<br><br>
+<img src="readme_images/tracing.png" alt="Demo"/>
 ### Дополнительные возможности
 - Данная библиотека многопоточная, можно проводить одинаковые замеры из разных потоков
 - `R_BENCHMARK_SCOPED` позволяет замерять в текущем видимом скопе производительность ([пример](example/simple_benchmark.cpp#L20))
