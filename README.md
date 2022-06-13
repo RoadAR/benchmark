@@ -8,7 +8,7 @@ for (int i = 0; i < 100; i++) {
   sleep_ms(i);
   R_BENCHMARK_STOP("algo");
 }
-std::cout << roadar::benchmarkLog() << std::endl;
+std::cout << R_BENCHMARK_LOG() << std::endl;
 
 // ================== Benchmark ==================
 // algo:      total: 5288.20    times: 100    avg: 52.88    last avg: 97.92    percent: 100.0 %    missed: 0.0 %
@@ -39,7 +39,7 @@ for (int i = 0; i < 10; i++) {
   sleep_ms(20); // этот участок попадет в missed
 }
 R_BENCHMARK_STOP("algo");
-std::cout << roadar::benchmarkLog() << std::endl;
+std::cout << R_BENCHMARK_LOG() << std::endl;
 
 // ================== Benchmark ==================
 // algo:         total: 552.07    times:  1    avg: 552.07    last avg: 552.07    percent: 100.0 %    missed: 44.8 %
