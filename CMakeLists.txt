@@ -8,10 +8,8 @@ endif ()
 
 option(BUILD_EXAMPLE "Build example usage" OFF)
 option(BENCHMARK_DISABLE "Disable benchmarking" OFF)
-option(BENCHMARK_DISABLE_AUTONESTING "If enabled you need to write write idetifier with parent prefix" OFF)
 
 add_compile_definitions($<$<BOOL:${BENCHMARK_DISABLE}>:BENCHMARK_DISABLE>)
-add_compile_definitions($<$<BOOL:${BENCHMARK_DISABLE_AUTONESTING}>:BENCHMARK_DISABLE_AUTONESTING>)
 
 
 add_library(rbenchmark STATIC src/benchmark.cpp)
@@ -30,7 +28,11 @@ install(TARGETS rbenchmark
 
 
 if (BUILD_EXAMPLE)
-    add_executable(example example/simple_benchmark.cpp)
-    target_link_libraries(example rbenchmark)
-    target_include_directories(example PRIVATE src)
+    add_executable(bench_example example/simple_benchmark.cpp)
+    target_link_libraries(bench_example rbenchmark)
+    target_include_directories(bench_example PRIVATE src)
+
+    add_executable(trace_example example/simple_tracing.cpp)
+    target_link_libraries(trace_example rbenchmark)
+    target_include_directories(trace_example PRIVATE src)
 endif()

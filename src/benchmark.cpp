@@ -8,48 +8,153 @@
 #include <sstream>
 #include <thread>
 #include <iomanip>
+#include <chrono>
 
 #ifndef _WIN32
 #include <sys/time.h>
-#else
-#include <chrono>
 #endif
 
 #ifndef CAPTURE_LAST_N_TIMES
 #define CAPTURE_LAST_N_TIMES 10
 #endif
 
-#ifndef BENCHMARK_DISABLE_AUTONESTING
-#define AUTONESTING
-#endif
-
-#ifndef BENCHMARK_DISABLE
-#define USE_BENCHMARK
-#endif
-
 
 // -------------------------------------------------
 
 namespace roadar {
-
-#ifdef AUTONESTING
 static const std::string kNestingString = " » ";
-#endif
 
 
 
 using namespace std;
 typedef unsigned long long timestamp_t;
 
-static timestamp_t get_timestamp() {
-#ifndef _WIN32
-  struct timeval now{};
-  gettimeofday(&now, nullptr);
-  return now.tv_usec + (timestamp_t)now.tv_sec * 1000000;
-#else
+#ifndef BENCHMARK_DISABLED
+  static timestamp_t get_timestamp() {
+  //TODO Тут отличие от github версии
   return chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now().time_since_epoch())
       .count();
+}
 #endif
+
+namespace Tracing {
+  struct TraceInfo {
+    std::string name;
+    uint32_t tid; // thread id
+    timestamp_t startTime;
+    timestamp_t duration;
+    int stackDepth;
+  };
+
+  class Serializer {
+  public:
+    Serializer(const Serializer&) = delete;
+    Serializer(Serializer&&) = delete;
+
+    Serializer(const std::string& filepath, bool flushOnMeasure, std::string &outErrMsg)
+            : flushOnMeasure_(flushOnMeasure) {
+      std::lock_guard<mutex> lock(mut_);
+      outStream_.open(filepath);
+
+      if (outStream_.is_open()) {
+        writeHeader();
+      } else {
+        outErrMsg = "RBenchmark::Tracing::Serializer could not open results file:\n" + filepath;
+      }
+    }
+    ~Serializer() {
+      end();
+    }
+
+    void end() {
+      std::lock_guard<mutex> lock(mut_);
+      if (!outStream_.is_open()) return;
+      sort(data_.begin(), data_.end(), [](const TraceInfo &a, const TraceInfo &b) -> bool {
+        if (a.startTime == b.startTime) {
+          if (a.duration == b.duration) {
+            return a.stackDepth < b.stackDepth;
+          } else {
+            return a.duration > b.duration;
+          }
+        } else {
+          return a.startTime < b.startTime;
+        }
+      });
+      for (const auto &d :data_) {
+        write(d, true);
+      }
+      data_.clear();
+      writeFooter();
+      outStream_.close();
+    }
+
+
+    void saveTrace(TraceInfo info) {
+      std::lock_guard<mutex> lock(mut_);
+      data_.push_back(move(info));
+    }
+
+    void write(const TraceInfo& info, bool threadSafe = false) {
+      std::stringstream json;
+
+      json << std::setprecision(3) << std::fixed;
+      json << ",{";
+      json << "\"cat\":\"function\",";
+      json << "\"dur\":" << (info.duration) << ',';
+      json << "\"name\":\"" << info.name << "\",";
+      json << "\"ph\":\"X\",";
+      json << "\"pid\":0,";
+      json << "\"tid\":" << info.tid << ",";
+      json << "\"ts\":" << info.startTime;
+      json << "}";
+
+      if (threadSafe) {
+        write(json.str(), flushOnMeasure_);
+      } else {
+        std::lock_guard<mutex> lock(mut_);
+        write(json.str(), flushOnMeasure_);
+      }
+    }
+
+    void writeThreadName(uint32_t tid, const std::string &name) {
+      std::stringstream json;
+
+      json << std::setprecision(3) << std::fixed;
+      json << ",{";
+      json << "\"cat\":\"function\",";
+      json << "\"name\":\"thread_name\",";
+      json << "\"ph\":\"M\",";
+      json << "\"pid\":0,";
+      json << "\"tid\":" << tid << ",";
+      json << "\"args\":{\"name\":\"" << name << "\"}";
+      json << "}";
+
+      std::lock_guard<mutex> lock(mut_);
+      write(json.str(), flushOnMeasure_);
+    }
+
+  private:
+    std::mutex mut_;
+    std::ofstream outStream_;
+    bool flushOnMeasure_;
+    std::vector<TraceInfo> data_;
+
+    void writeHeader() {
+      outStream_ << R"({"otherData": {},"traceEvents":[{})";
+      outStream_.flush();
+    }
+
+    void writeFooter() {
+      outStream_ << "]}";
+      outStream_.flush();
+    }
+
+    void write(const std::string &str, bool flush) {
+      if (!outStream_.is_open()) return;
+      outStream_ << str;
+      if(flush) outStream_.flush();
+    }
+  };
 }
 
 /*!
@@ -64,15 +169,14 @@ struct MeasurmentInfo {
   unsigned long startNTimesIdx = 0;
 };
 
-struct MesurmentGroup {
-  MesurmentGroup() = default;
-  MesurmentGroup(MesurmentGroup const&val) {
+struct MeasurementGroup {
+  MeasurementGroup() = default;
+  MeasurementGroup(MeasurementGroup const &val) {
     map = val.map;
   };
   unordered_map<string, MeasurmentInfo> map = {};
-#ifdef AUTONESTING
+  uint32_t tid = 0;
   string parentKey;
-#endif
 };
 
 class ErrorMsg {
@@ -103,8 +207,8 @@ private:
 };
 
 inline bool stringHasSuffix(std::string const &value, std::string const &suffix) {
-    if (suffix.size() > value.size()) return false;
-    return std::equal(suffix.rbegin(), suffix.rend(), value.rbegin());
+  if (suffix.size() > value.size()) return false;
+  return std::equal(suffix.rbegin(), suffix.rend(), value.rbegin());
 }
 
 inline bool stringHasPrefix(const std::string &str, const std::string &prefix) {
@@ -112,51 +216,46 @@ inline bool stringHasPrefix(const std::string &str, const std::string &prefix) {
   return res.first == prefix.end();
 }
 
-static unordered_map<size_t, MesurmentGroup> measurmentThreadMap;
+static unordered_map<uint32_t, MeasurementGroup> measurmentThreadMap;
 static mutex mut;
 static ErrorMsg errorMsg;
+static std::unique_ptr<Tracing::Serializer> tracing;
 
-inline MesurmentGroup &getMeasurmentGroup() {
-  size_t tid = std::hash<std::thread::id>()(std::this_thread::get_id());
+inline uint32_t get_tid() {
+  return (uint32_t)std::hash<std::thread::id>()(std::this_thread::get_id());
+}
+inline MeasurementGroup &getMeasurmentGroup() {
+  uint32_t tid = get_tid();
   lock_guard<mutex> lock(mut);
   if (measurmentThreadMap.count(tid) == 0) {
-      measurmentThreadMap.emplace(tid, MesurmentGroup());
+    measurmentThreadMap.emplace(tid, MeasurementGroup());
+    measurmentThreadMap[tid].tid = tid;
   }
   return measurmentThreadMap[tid];
 }
 
 bool benchmarkStart(const string &identifier, const string &file, int line) {
-#ifdef USE_BENCHMARK
+#ifndef BENCHMARK_DISABLED
 
   auto &measurmentGroup = getMeasurmentGroup();
   auto &measurmentMap = measurmentGroup.map;
-#ifdef AUTONESTING
   if (measurmentGroup.parentKey.empty()) {
     measurmentGroup.parentKey += identifier;
   } else {
     measurmentGroup.parentKey += kNestingString + identifier;
   }
-//  переопределяем identifier, чтобы не делать при ненадобности его копию
-//  опасненько, но делаем это аккуртно
-#define identifier measurmentGroup.parentKey
-#endif
-  
-  if (measurmentMap.count(identifier) == 0)
-    measurmentMap[identifier] = {};
 
-  MeasurmentInfo &info = measurmentMap[identifier];
-  if (info.lastStartTime) {
-    errorMsg.update("Benchmark already run for \"" + identifier + "\" key", file, line);
-    return false;
+  MeasurmentInfo &info = measurmentMap[measurmentGroup.parentKey];
+  if (info.lastStartTime > 0) {
+    errorMsg.update("Benchmark already run for \"" + measurmentGroup.parentKey + "\" key", file, line);
+    return true;
   }
 
-#undef identifier
   info.lastStartTime = get_timestamp();
 #endif
   return true;
 }
 
-#ifdef AUTONESTING
 void failWrongNestingKey(const std::string &fullPath, const std::string &idetifier, const string &file, int line) {
   auto keyFromIdx = fullPath.find_last_of(kNestingString);
   std::string lastKeyPath;
@@ -168,51 +267,46 @@ void failWrongNestingKey(const std::string &fullPath, const std::string &idetifi
   string msg = "benchmarkStop(\"" + idetifier + "\") not matched with last key \"" + lastKeyPath + "\"";
   errorMsg.update(msg, file, line);
 }
-#endif
 
-bool benchmarkStop(const string &identifier, const string &file, int line) {
-#ifdef USE_BENCHMARK
+void benchmarkStop(const string &identifier, const string &file, int line) {
+#ifndef BENCHMARK_DISABLED
   auto &measurmentGroup = getMeasurmentGroup();
   auto &measurmentMap = measurmentGroup.map;
-  
-#ifdef AUTONESTING
-//  переопределяем identifier, чтобы не делать при ненадобности его копию
-//  опасненько, но делаем это аккуртно
+
   if (!stringHasSuffix(measurmentGroup.parentKey, identifier)) {
     failWrongNestingKey(measurmentGroup.parentKey, identifier, file, line);
-    return false;
-  }
-#define identifier measurmentGroup.parentKey
-#endif
-  
-  if (measurmentMap.count(identifier) == 0) {
-    errorMsg.update("Internal error. Missing \"" + identifier + "\" key", file, line);
-    return false;
-  }
-  MeasurmentInfo &info = measurmentMap[identifier];
-  if (info.lastStartTime == 0) {
-    errorMsg.update("Benchmark for \"" + identifier + "\" key not started", file, line);
-    return false;
+    return;
   }
 
-#ifdef AUTONESTING
-#undef identifier
+  if (measurmentMap.count(measurmentGroup.parentKey) == 0) {
+    errorMsg.update("Internal error. Missing \"" + measurmentGroup.parentKey + "\" key", file, line);
+    return;
+  }
+  MeasurmentInfo &info = measurmentMap[measurmentGroup.parentKey];
+  if (info.lastStartTime == 0) {
+    errorMsg.update("Benchmark for \"" + measurmentGroup.parentKey + "\" key not started", file, line);
+    return;
+  }
+
   long toIdx = (long)measurmentGroup.parentKey.length() - (long)identifier.length() - (long)kNestingString.length();
   measurmentGroup.parentKey = measurmentGroup.parentKey.substr(0, max((long)0, toIdx));
-#endif
-  
-  double time = static_cast<double>(get_timestamp() - info.lastStartTime);
+
+  auto dt = get_timestamp() - info.lastStartTime;
+  auto ts = info.lastStartTime;
+  auto time = static_cast<double>(dt);
   info.totalTime += time;
   info.timesExecuted++;
   info.lastStartTime = 0;
   info.lastNTimes[info.startNTimesIdx % CAPTURE_LAST_N_TIMES] = time;
   info.startNTimesIdx++;
+  if (tracing) {
+    tracing->saveTrace({identifier, measurmentGroup.tid, ts, dt, (int)measurmentGroup.parentKey.length()});
+  }
 #endif
-  return true;
 }
 
 void benchmarkReset() {
-#ifdef USE_BENCHMARK
+#ifndef BENCHMARK_DISABLED
   lock_guard<mutex> lock(mut);
   for (auto &kv : measurmentThreadMap) {
     for (auto it = kv.second.map.begin(); it != kv.second.map.end(); ) {
@@ -243,7 +337,7 @@ void benchmarkReset() {
 // Out measurments
 
 double getTotalExecutionTime(const vector<pair<string, MeasurmentInfo>> &measureVector) {
-#ifdef USE_BENCHMARK
+#ifndef BENCHMARK_DISABLED
   int count = static_cast<int>(measureVector.size());
   vector<int> parents(measureVector.size(), -2);
 
@@ -270,7 +364,7 @@ double getTotalExecutionTime(const vector<pair<string, MeasurmentInfo>> &measure
 }
 
 void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipPrefix = true) {
-#ifdef USE_BENCHMARK
+#ifndef BENCHMARK_DISABLED
   // make Tree structure
   int count = (int)measureVector.size();
 
@@ -282,10 +376,8 @@ void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipP
   for (int j = 0; j < count; j++) {
     string prefix = measureVector[j].first;
     origNames[j] = prefix;
-#ifdef AUTONESTING
     prefix += kNestingString;
-#endif
-    
+
     for (int i = 0; i < count; i++) {
       if (i == j || !stringHasPrefix(measureVector[i].first, prefix))
         continue;
@@ -302,9 +394,7 @@ void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipP
     string name = measureVector[i].first;
     if (skipPrefix && parents[i] >= 0) {
       size_t from = origNames[parents[i]].size();
-#ifdef AUTONESTING
       from += kNestingString.size();
-#endif
       name = name.substr(from);
       measureVector[parents[i]].second.childrenTime += measureVector[i].second.totalTime;
     }
@@ -370,7 +460,6 @@ unordered_map<string, MeasurmentInfo> unionMeasurments() {
       }
     }
   }
-  
   return res;
 }
 
@@ -408,7 +497,7 @@ inline string formatString(stringstream &ss, T val) {
 }
 
 string benchmarkLog(Field withoutFields) {
-#ifdef USE_BENCHMARK
+#ifndef BENCHMARK_DISABLED
   string errorMsgString;
   if (errorMsg.popError(errorMsgString)) {
     string msg = "\n=============== Benchmark Error ===============\n";
@@ -421,8 +510,8 @@ string benchmarkLog(Field withoutFields) {
   vector<pair<string, MeasurmentInfo>> measureVector;
   {
     lock_guard<mutex> lock(mut);
-    const auto mesurments = unionMeasurments();
-    for (const auto &k: mesurments)
+    const auto measurements = unionMeasurments();
+    for (const auto &k: measurements)
       measureVector.emplace_back(k);
   }
 
@@ -449,9 +538,9 @@ string benchmarkLog(Field withoutFields) {
 
     double lastTimesTotal = 0;
     unsigned long avaiableLastMeasurmentCount = k.second.startNTimesIdx < CAPTURE_LAST_N_TIMES
-                                           ? k.second.startNTimesIdx
-                                           : CAPTURE_LAST_N_TIMES;
-    for (long i = 0; i < avaiableLastMeasurmentCount; i++)
+                                                    ? k.second.startNTimesIdx
+                                                    : CAPTURE_LAST_N_TIMES;
+    for (unsigned long i = 0; i < avaiableLastMeasurmentCount; i++)
       lastTimesTotal += k.second.lastNTimes[i];
 
     double lastTimes = avaiableLastMeasurmentCount == 0 ? 0.0 : (lastTimesTotal / (double)avaiableLastMeasurmentCount);
@@ -499,13 +588,13 @@ string benchmarkLog(Field withoutFields) {
 }
 
 ScopedBenchmark::ScopedBenchmark(const std::string& identifier): m_identifier(identifier) {
-#ifdef USE_BENCHMARK
+#ifndef BENCHMARK_DISABLED
   benchmarkStart(identifier);
 #endif
-};
+}
 
 void ScopedBenchmark::reset(const std::string& newIdentifier) {
-#ifdef USE_BENCHMARK
+#ifndef BENCHMARK_DISABLED
   benchmarkStop(m_identifier);
   m_identifier = newIdentifier;
   benchmarkStart(m_identifier);
@@ -513,9 +602,27 @@ void ScopedBenchmark::reset(const std::string& newIdentifier) {
 }
 
 ScopedBenchmark::~ScopedBenchmark() {
-#ifdef USE_BENCHMARK
+#ifndef BENCHMARK_DISABLED
   benchmarkStop(m_identifier);
 #endif
 }
 
-} // namespace RoadAR
+void benchmarkStartTracing(const std::string &writeJsonPath, const std::string &file, int line) {
+  lock_guard<mutex> lock(mut);
+  string err;
+  tracing = unique_ptr<Tracing::Serializer>(new Tracing::Serializer(writeJsonPath, false, err));
+  if (!err.empty()) {
+    tracing.reset(nullptr);
+    errorMsg.update(err, file, line);
+  }
+}
+void benchmarkStopTracing() {
+  lock_guard<mutex> lock(mut);
+  tracing.reset(nullptr);
+}
+
+void benchmarkTracingThreadName(const std::string &name) {
+  if (tracing) tracing->writeThreadName(get_tid(), name);
+}
+
+} // namespace roadar

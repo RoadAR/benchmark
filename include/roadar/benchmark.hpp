@@ -1,46 +1,69 @@
 /*!
- * \file
- * \brief Модуль бенчмарк-логов.
- */
+* \file
+* \brief Модуль бенчмарк-логов.
+*/
 
 #pragma once
 
 #include <string>
 
 
-//! Шаблон для бенчмарк-теста производительности.
-#define RBENCHMARK(__identifier)                                  \
-  for (bool finished = !roadar::benchmarkStart(__identifier); !finished; \
-    finished = true, roadar::benchmarkStop(__identifier))
+#ifndef BENCHMARK_DISABLED
+#define R_BENCHMARK_START(_identifier_) roadar::benchmarkStart(_identifier_, __FILE__, __LINE__)
+#define R_BENCHMARK_STOP(_identifier_) roadar::benchmarkStop(_identifier_, __FILE__, __LINE__)
+#define R_BENCHMARK(_identifier_)                                  \
+ for (bool f = R_BENCHMARK_START(_identifier_); f; f = false, R_BENCHMARK_STOP(_identifier_))
+
+// вспомогательные директивы для создания переменной с номером строчки
+#define R_HIDDEN_SCOPED_L__(_identifier_, line) roadar::ScopedBenchmark r_bench##line(_identifier_)
+#define R_HIDDEN_SCOPED_L_(_identifier_, line) R_HIDDEN_SCOPED_L__(_identifier_, line)
+
+#define R_BENCHMARK_SCOPED(_identifier_) roadar::ScopedBenchmark r_bench(_identifier_)
+#define R_BENCHMARK_SCOPED_L(_identifier_) R_HIDDEN_SCOPED_L_(_identifier_, __LINE__)
+#define R_BENCHMARK_LOG(_without_fields_) roadar::benchmarkLog(_without_fields_)
+
+// To view result of tracing use https://ui.perfetto.dev/
+#define R_TRACING_START(_file_name_) roadar::benchmarkStartTracing(_file_name_, __FILE__, __LINE__)
+#define R_TRACING_STOP() roadar::benchmarkStopTracing()
+#define R_TRACING_THREAD_NAME(_thread_name_) roadar::benchmarkTracingThreadName(_thread_name_)
+
+#else
+#define R_BENCHMARK_START(_identifier_)
+#define R_BENCHMARK_STOP(_identifier_)
+#define R_BENCHMARK(_identifier_)
+#define R_BENCHMARK_SCOPED(_identifier_)
+#define R_BENCHMARK_SCOPED_L(_identifier_)
+#define R_BENCHMARK_LOG(_without_fields_) "Benchmark disabled"
+#define R_TRACING_START(_file_name_)
+#define R_TRACING_STOP()
+#define R_TRACING_THREAD_NAME(_name_)
+#endif
 
 //!
-#define RBENCHMARK_ENUM_FLAG_OPERATORS(T)                                                                                                                                            \
-    inline T operator~ (T a) { return static_cast<T>( ~static_cast<std::underlying_type<T>::type>(a) ); }                                                                       \
-    inline T operator| (T a, T b) { return static_cast<T>( static_cast<std::underlying_type<T>::type>(a) | static_cast<std::underlying_type<T>::type>(b) ); }                   \
-    inline T operator& (T a, T b) { return static_cast<T>( static_cast<std::underlying_type<T>::type>(a) & static_cast<std::underlying_type<T>::type>(b) ); }                   \
-    inline T operator^ (T a, T b) { return static_cast<T>( static_cast<std::underlying_type<T>::type>(a) ^ static_cast<std::underlying_type<T>::type>(b) ); }                   \
-    inline T& operator|= (T& a, T b) { return reinterpret_cast<T&>( reinterpret_cast<std::underlying_type<T>::type&>(a) |= static_cast<std::underlying_type<T>::type>(b) ); }   \
-    inline T& operator&= (T& a, T b) { return reinterpret_cast<T&>( reinterpret_cast<std::underlying_type<T>::type&>(a) &= static_cast<std::underlying_type<T>::type>(b) ); }   \
-    inline T& operator^= (T& a, T b) { return reinterpret_cast<T&>( reinterpret_cast<std::underlying_type<T>::type&>(a) ^= static_cast<std::underlying_type<T>::type>(b) ); }
+#define R_BENCHMARK_ENUM_FLAG_OPERATORS(T)                                                                                                                                            \
+   inline T operator~ (T a) { return static_cast<T>( ~static_cast<std::underlying_type<T>::type>(a) ); }                                                                       \
+   inline T operator| (T a, T b) { return static_cast<T>( static_cast<std::underlying_type<T>::type>(a) | static_cast<std::underlying_type<T>::type>(b) ); }                   \
+   inline T operator& (T a, T b) { return static_cast<T>( static_cast<std::underlying_type<T>::type>(a) & static_cast<std::underlying_type<T>::type>(b) ); }                   \
+   inline T operator^ (T a, T b) { return static_cast<T>( static_cast<std::underlying_type<T>::type>(a) ^ static_cast<std::underlying_type<T>::type>(b) ); }                   \
+   inline T& operator|= (T& a, T b) { return reinterpret_cast<T&>( reinterpret_cast<std::underlying_type<T>::type&>(a) |= static_cast<std::underlying_type<T>::type>(b) ); }   \
+   inline T& operator&= (T& a, T b) { return reinterpret_cast<T&>( reinterpret_cast<std::underlying_type<T>::type&>(a) &= static_cast<std::underlying_type<T>::type>(b) ); }   \
+   inline T& operator^= (T& a, T b) { return reinterpret_cast<T&>( reinterpret_cast<std::underlying_type<T>::type&>(a) ^= static_cast<std::underlying_type<T>::type>(b) ); }
 
 
 namespace roadar {
 
 /*!
- * \brief Начало бенчмарка.
- * \param[in] identifier Идентификатор.
- * \return Флаг успешного завершения метода.
- */
+* \brief Начало бенчмарка.
+* \param[in] identifier Идентификатор.
+* \return Всегда возвращает `true`
+*/
   bool benchmarkStart(const std::string &identifier, const std::string &file = "", int line = 0);
-  #define RBENCHMARK_START(_identifier_) roadar::benchmarkStart(_identifier_, __FILE__, __LINE__)
 
 /*!
- * \brief Конец бенчмарка.
- * \param[in] identifier Идентификатор.
- * \return Флаг успешного завершения метода.
- */
-  bool benchmarkStop(const std::string &identifier, const std::string &file = "", int line = 0);
-  #define RBENCHMARK_STOP(_identifier_) roadar::benchmarkStop(_identifier_, __FILE__, __LINE__)
+* \brief Конец бенчмарка.
+* \param[in] identifier Идентификатор.
+*/
+  void benchmarkStop(const std::string &identifier, const std::string &file = "", int line = 0);
 
   enum class Field {
     none          = 0,
@@ -51,17 +74,17 @@ namespace roadar {
     percent       = 1<<4,   // 0x10
     percentMissed = 1<<5    // 0x20
   };
-  RBENCHMARK_ENUM_FLAG_OPERATORS(Field)
+  R_BENCHMARK_ENUM_FLAG_OPERATORS(Field)
 
 /*!
- * \brief Бенчмарк-лог.
- * \return Текст лога.
- */
+* \brief Бенчмарк-лог.
+* \return Текст лога.
+*/
   std::string benchmarkLog(Field withoutFields = Field::none);
 
 /*!
- * \brief Очищает все завершенные замеры
- */
+* \brief Очищает все завершенные замеры
+*/
   void benchmarkReset();
 
 
@@ -74,4 +97,8 @@ namespace roadar {
     std::string m_identifier;
   };
 
-} // namespace RoadAR
+// To view result of tracing use https://ui.perfetto.dev/
+  void benchmarkStartTracing(const std::string &writeJsonPath, const std::string &file = "", int line = 0);
+  void benchmarkStopTracing();
+  void benchmarkTracingThreadName(const std::string &name);
+} // namespace RoadarNumbers

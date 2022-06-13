@@ -4,9 +4,9 @@
 ### Пример
 ```cpp
 for (int i = 0; i < 100; i++) {
-  RBENCHMARK_START("algo");
+  R_BENCHMARK_START("algo");
   sleep_ms(i);
-  RBENCHMARK_STOP("algo");
+  R_BENCHMARK_STOP("algo");
 }
 std::cout << roadar::benchmarkLog() << std::endl;
 
@@ -28,17 +28,17 @@ std::cout << roadar::benchmarkLog() << std::endl;
 ### Вложенные замеры
 Мы также можем внутри одного замера, запускать второй замер. Таким образом можно замерить как работают разные участки.
 ```cpp
-RBENCHMARK_START("algo");
+R_BENCHMARK_START("algo");
 for (int i = 0; i < 10; i++) {
-  RBENCHMARK("part_1") {
+  R_BENCHMARK("part_1") {
     sleep_ms(10);
   }
-  RBENCHMARK("part_2") {
+  R_BENCHMARK("part_2") {
     sleep_ms(15);
   }
   sleep_ms(20); // этот участок попадет в missed
 }
-RBENCHMARK_STOP("algo");
+R_BENCHMARK_STOP("algo");
 std::cout << roadar::benchmarkLog() << std::endl;
 
 // ================== Benchmark ==================
@@ -47,9 +47,22 @@ std::cout << roadar::benchmarkLog() << std::endl;
 //   part_1:     total: 125.41    times: 10    avg:  12.54    last avg:  12.54    percent:  22.7 %    missed:  0.0 %
 // ===============================================
 ```
+## Tracing
+Для дебага многопоточных приложений можно записать tracing вызовов. В данном случае библиотека записывает в какой момент времени был вызван каждый участок кода и позволяет просмотреть через [Perfetto](https://ui.perfetto.dev/). Для записи трейсинга:
+```
+// при желании для каждого треда можно указать имя для удобного просмотра
+R_TRACING_THREAD_NAME("Video read thread");
+
+// при начале участка когда хотим сохранить tracing вызовов
+R_TRACING_START("../tracing.json");
+// обязательно вызываем под конец, происходит запись в файл
+R_TRACING_STOP();
+```
+<img src="readme_images/tracing.png" alt="Demo" width="700" />
 ### Дополнительные возможности
 - Данная библиотека многопоточная, можно проводить одинаковые замеры из разных потоков
-- `ScopedBenchmark` позволяет замерять в текущем видимом скопе производительность ([пример](example/simple_benchmark.cpp#L20))
+- `R_BENCHMARK_SCOPED` позволяет замерять в текущем видимом скопе производительность ([пример](example/simple_benchmark.cpp#L20))
+- `R_BENCHMARK_SCOPED_L` тоже самое что предыдущий вариант, имя переменной будет уникальным
 
 ## Сборка
 ```
@@ -58,18 +71,7 @@ cmake --build build;
 ```
 Опции `CMake`:
 - `-DBUILD_EXAMPLE=ON` - сборка примера вместе с библиотекой
-- `-DBENCHMARK_DISABLE=ON` - с таким флагом замеры не будут производится
-- `-DBENCHMARK_DISABLE_AUTONESTING=ON` - автоматическая вложенность пропадает; пример использования при таком флаге: 
-```
-BENCHMARK("algo") {
-  BENCHMARK("algo part_1") {
-    sleep_ms(1);
-  }
-  BENCHMARK("algo part_2") {
-    sleep_ms(1);
-  }
-}
-```
+- `-DBENCHMARK_DISABLE=ON` - с таким флагом замеры не будут производится 
 
 ## Заметки
 Чем данная библиотека лучше [google/benchmark](https://github.com/google/benchmark)? Ничем. У этих библиотек разные цели:
