@@ -25,7 +25,12 @@ install(TARGETS rbenchmark
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
         PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-
+add_custom_command(
+        TARGET rbenchmark
+        POST_BUILD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/header_only
+        COMMAND /bin/sh make.sh
+)
 
 if (BUILD_EXAMPLE)
     add_executable(bench_example example/simple_benchmark.cpp)
