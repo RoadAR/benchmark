@@ -19,7 +19,7 @@ void algorithm1() {
   for (int i = 0; i < 10; i++) {
     R_BENCHMARK_SCOPED("step_1_1");
     sleep_ms(10);
-    r_bench.reset("step_1_2");
+    R_BENCHMARK_SCOPED_RESET("step_1_2");
     sleep_ms(5);
   }
 

@@ -19,8 +19,11 @@
 #define R_HIDDEN_SCOPED_L_(_identifier_, line) R_HIDDEN_SCOPED_L__(_identifier_, line)
 
 #define R_BENCHMARK_SCOPED(_identifier_) roadar::ScopedBenchmark r_bench(_identifier_)
+#define R_BENCHMARK_SCOPED_RESET(_identifier_) r_bench.reset(_identifier_)
 #define R_BENCHMARK_SCOPED_L(_identifier_) R_HIDDEN_SCOPED_L_(_identifier_, __LINE__)
+
 #define R_BENCHMARK_LOG(_without_fields_) roadar::benchmarkLog(_without_fields_)
+#define R_BENCHMARK_RESET() roadar::benchmarkReset()
 
 // To view result of tracing use https://ui.perfetto.dev/
 #define R_TRACING_START(_file_name_) roadar::benchmarkStartTracing(_file_name_, __FILE__, __LINE__)
@@ -32,8 +35,10 @@
 #define R_BENCHMARK_STOP(_identifier_)
 #define R_BENCHMARK(_identifier_)
 #define R_BENCHMARK_SCOPED(_identifier_)
+#define R_BENCHMARK_SCOPED_RESET(_identifier_)
 #define R_BENCHMARK_SCOPED_L(_identifier_)
 #define R_BENCHMARK_LOG(_without_fields_) "Benchmark disabled"
+#define R_BENCHMARK_RESET()
 #define R_TRACING_START(_file_name_)
 #define R_TRACING_STOP()
 #define R_TRACING_THREAD_NAME(_name_)
