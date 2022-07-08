@@ -12,7 +12,7 @@
 #define R_BENCHMARK_START(_identifier_) roadar::benchmarkStart(_identifier_, __FILE__, __LINE__)
 #define R_BENCHMARK_STOP(_identifier_) roadar::benchmarkStop(_identifier_, __FILE__, __LINE__)
 #define R_BENCHMARK(_identifier_)                                  \
- for (bool f = R_BENCHMARK_START(_identifier_); f; f = false, R_BENCHMARK_STOP(_identifier_))
+ for (bool _r_bench_bool = R_BENCHMARK_START(_identifier_); _r_bench_bool; _r_bench_bool = false, R_BENCHMARK_STOP(_identifier_))
 
 // вспомогательные директивы для создания переменной с номером строчки
 #define R_HIDDEN_SCOPED_L__(_identifier_, line) roadar::ScopedBenchmark r_bench##line(_identifier_)

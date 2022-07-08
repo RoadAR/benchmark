@@ -8,12 +8,14 @@ endif ()
 
 option(BUILD_EXAMPLE "Build example usage" OFF)
 option(BENCHMARK_DISABLE "Disable benchmarking" OFF)
-
-add_compile_definitions($<$<BOOL:${BENCHMARK_DISABLE}>:BENCHMARK_DISABLE>)
-
+set(BUILD_WITH_RBENCHMARK ON PARENT_SCOPE)
 
 add_library(rbenchmark STATIC src/benchmark.cpp)
 target_include_directories(rbenchmark PUBLIC "include")
+
+
+target_compile_definitions(rbenchmark PRIVATE $<$<BOOL:${BENCHMARK_DISABLE}>:BENCHMARK_DISABLE>)
+add_compile_definitions(BUILD_WITH_RBENCHMARK)
 
 
 set_target_properties(rbenchmark PROPERTIES
@@ -28,7 +30,7 @@ install(TARGETS rbenchmark
 add_custom_command(
         TARGET rbenchmark
         POST_BUILD
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/header_only
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/header_only
         COMMAND /bin/sh make.sh
 )
 
