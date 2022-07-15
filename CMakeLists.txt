@@ -7,16 +7,12 @@ if (POLICY CMP0042)
 endif ()
 
 option(BUILD_EXAMPLE "Build example usage" OFF)
-option(BENCHMARK_DISABLE "Disable benchmarking" OFF)
-set(BUILD_WITH_RBENCHMARK ON PARENT_SCOPE)
+option(BENCHMARK_DISABLED "Disable benchmarking" OFF)
 
 add_library(rbenchmark STATIC src/benchmark.cpp)
 target_include_directories(rbenchmark PUBLIC "include")
 
-
-target_compile_definitions(rbenchmark PRIVATE $<$<BOOL:${BENCHMARK_DISABLE}>:BENCHMARK_DISABLE>)
-add_compile_definitions(BUILD_WITH_RBENCHMARK)
-
+target_compile_definitions(rbenchmark PRIVATE $<$<BOOL:${BENCHMARK_DISABLED}>:BENCHMARK_DISABLED>)
 
 set_target_properties(rbenchmark PROPERTIES
         VERSION 1.0
