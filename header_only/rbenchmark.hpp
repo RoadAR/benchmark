@@ -117,6 +117,7 @@ namespace roadar {
 #include <thread>
 #include <iomanip>
 #include <chrono>
+#include <memory> // unique_ptr
 
 #ifndef _WIN32
 #include <sys/time.h>
