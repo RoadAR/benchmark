@@ -21,11 +21,32 @@ set_target_properties(rbenchmark PROPERTIES
         SOVERSION 1
         PUBLIC_HEADER include/roadar/benchmark.hpp)
 
+if(MSVC) # for windows don't install the library for access permissions mainly (just building is possible)
+    message(STATUS "Library will be built in folder ${CMAKE_CURRENT_BINARY_DIR}, please copy include and lib folders to your project")
+    # Copy the needed header into the build directory
+    add_custom_command(
+        TARGET rbenchmark POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy
+        ${PROJECT_SOURCE_DIR}/include/roadar/benchmark.hpp
+        ${CMAKE_CURRENT_BINARY_DIR}/include/roadar/benchmark.hpp)
+    # Copy the needed lib files (and pdb in case of debug) to its config directory
+    add_custom_command(
+        TARGET rbenchmark POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_BINARY_DIR}/$<$<CONFIG:Debug>:Debug>$<$<CONFIG:Release>:Release>"
+        "${CMAKE_CURRENT_BINARY_DIR}/lib/$<$<CONFIG:Debug>:Debug>$<$<CONFIG:Release>:Release>")
+else()
 install(TARGETS rbenchmark
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
         PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+endif()
+
+
 
 if (BUILD_HEADER_ONLY)
+    if(MSVC)
+        message(FATAL_ERROR "BUILD_HEADER_ONLY is not supported for Windows")
+    endif()
     add_custom_command(
             TARGET rbenchmark
             POST_BUILD
@@ -33,7 +54,7 @@ if (BUILD_HEADER_ONLY)
             COMMAND /bin/sh make.sh
     )
 endif ()
-
+# TODO fix for msvc
 if (BUILD_EXAMPLE)
     add_executable(bench_example example/simple_benchmark.cpp)
     target_link_libraries(bench_example rbenchmark)
