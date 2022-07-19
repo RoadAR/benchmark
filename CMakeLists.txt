@@ -54,8 +54,9 @@ if (BUILD_HEADER_ONLY)
             COMMAND /bin/sh make.sh
     )
 endif ()
-# TODO fix for msvc
+
 if (BUILD_EXAMPLE)
+    set(CMAKE_CXX_FLAGS -pthread)
     add_executable(bench_example example/simple_benchmark.cpp)
     target_link_libraries(bench_example rbenchmark)
     target_include_directories(bench_example PRIVATE src)

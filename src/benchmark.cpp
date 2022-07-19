@@ -217,7 +217,8 @@ inline bool stringHasPrefix(const std::string &str, const std::string &prefix) {
   return res.first == prefix.end();
 }
 
-static unordered_map<uint32_t, MeasurementGroup> measurmentThreadMap;
+// without shared_ptr this map fails on Win machine
+static unordered_map<uint32_t, shared_ptr<MeasurementGroup>> measurmentThreadMap;
 static mutex mut;
 static ErrorMsg errorMsg;
 static std::unique_ptr<Tracing::Serializer> tracing;
@@ -229,10 +230,10 @@ inline MeasurementGroup &getMeasurmentGroup() {
   uint32_t tid = get_tid();
   lock_guard<mutex> lock(mut);
   if (measurmentThreadMap.count(tid) == 0) {
-    measurmentThreadMap.emplace(tid, MeasurementGroup());
-    measurmentThreadMap[tid].tid = tid;
+    measurmentThreadMap.emplace(tid, make_shared<MeasurementGroup>());
+    measurmentThreadMap[tid]->tid = tid;
   }
-  return measurmentThreadMap[tid];
+  return *measurmentThreadMap[tid].get();
 }
 
 bool benchmarkStart(const string &identifier, const string &file, int line) {
@@ -310,13 +311,14 @@ void benchmarkReset() {
 #ifndef BENCHMARK_DISABLED
   lock_guard<mutex> lock(mut);
   for (auto &kv : measurmentThreadMap) {
-    for (auto it = kv.second.map.begin(); it != kv.second.map.end(); ) {
+    auto &map = kv.second->map;
+    for (auto it = map.begin(); it != map.end(); ) {
       if (it->second.lastStartTime == 0) {
         // reset info for non finished benchmarks
         auto lastStartTime = it->second.lastStartTime;
         it->second = MeasurmentInfo();
         it->second.lastStartTime = lastStartTime;
-        it = kv.second.map.erase(it);
+        it = map.erase(it);
       } else {
         // remove all finished benchmarks
         ++it;
@@ -325,7 +327,7 @@ void benchmarkReset() {
   }
 
   for (auto it = measurmentThreadMap.begin(); it != measurmentThreadMap.end(); ) {
-    if (it->second.map.empty()) {
+    if (it->second->map.empty()) {
       // no measurments for thread, cleanup
       it = measurmentThreadMap.erase(it);
     } else {
@@ -446,11 +448,11 @@ unordered_map<string, MeasurmentInfo> unionMeasurments() {
   }
   unordered_map<string, MeasurmentInfo> res;
   for (auto &threadMeasurments : measurmentThreadMap) {
-    auto &measurmentsMap = threadMeasurments.second;
+    const auto &measurmentsMap = threadMeasurments.second->map;
     if (res.empty()) {
-      res = measurmentsMap.map;
+      res = measurmentsMap;
     } else {
-      for (const auto &measure: measurmentsMap.map) {
+      for (const auto &measure: measurmentsMap) {
         if (res.count(measure.first) == 0) {
           res[measure.first] = measure.second;
         } else {
