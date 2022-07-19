@@ -44,7 +44,7 @@ endif()
 
 
 if (BUILD_HEADER_ONLY)
-	if(MSVC)
+    if(MSVC)
         message(FATAL_ERROR "BUILD_HEADER_ONLY is not supported for Windows")
     endif()
     add_custom_command(
