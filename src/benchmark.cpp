@@ -212,9 +212,11 @@ inline bool stringHasSuffix(std::string const &value, std::string const &suffix)
   return std::equal(suffix.rbegin(), suffix.rend(), value.rbegin());
 }
 
-inline bool stringHasPrefix(const std::string &str, const std::string &prefix) {
-  auto res = mismatch(prefix.begin(), prefix.end(), str.begin());
-  return res.first == prefix.end();
+inline bool stringHasPrefix(const std::string& str, const std::string& prefix) {
+    if (prefix.size() > str.size()) return false;
+
+    auto res = mismatch(prefix.begin(), prefix.end(), str.begin());
+    return res.first == prefix.end();
 }
 
 // without shared_ptr this map fails on Win machine
