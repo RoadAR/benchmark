@@ -12,7 +12,10 @@ option(BUILD_HEADER_ONLY "Build header only" ON)
 option(BENCHMARK_DISABLED "Disable benchmarking" OFF)
 option(NO_INSTALL "Disable Install (windows only)" OFF)
 
-add_library(rbenchmark STATIC src/benchmark.cpp)
+if(NOT TARGET rbenchmark)
+    add_library(rbenchmark STATIC src/benchmark.cpp)
+endif()
+
 target_include_directories(rbenchmark PUBLIC "include")
 
 target_compile_definitions(rbenchmark PRIVATE $<$<BOOL:${BENCHMARK_DISABLED}>:BENCHMARK_DISABLED>)
