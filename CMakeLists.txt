@@ -3,12 +3,16 @@ project(rbenchmark C CXX)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Globally notify about lib
+set(BUILD_WITH_RBENCHMARK ON PARENT_SCOPE)
+add_compile_definitions(BUILD_WITH_RBENCHMARK)
+
 if (POLICY CMP0042)
     cmake_policy(SET CMP0042 NEW)
 endif ()
 
 option(BUILD_EXAMPLE "Build example usage" OFF)
-option(BUILD_HEADER_ONLY "Build header only" ON)
+option(BUILD_HEADER_ONLY "Build header only" OFF)
 option(BENCHMARK_DISABLED "Disable benchmarking" OFF)
 option(NO_INSTALL "Disable Install (windows only)" OFF)
 
@@ -44,9 +48,9 @@ if(NO_INSTALL) # for windows install might not work because of access permission
         "${CMAKE_CURRENT_BINARY_DIR}/$<$<CONFIG:Debug>:Debug>$<$<CONFIG:Release>:Release>"
         "${CMAKE_CURRENT_BINARY_DIR}/lib/$<$<CONFIG:Debug>:Debug>$<$<CONFIG:Release>:Release>")
 else()
-install(TARGETS rbenchmark
-        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    install(TARGETS rbenchmark
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 endif()
 
 
