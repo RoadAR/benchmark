@@ -10,10 +10,12 @@ endif ()
 option(BUILD_EXAMPLE "Build example usage" OFF)
 option(BUILD_HEADER_ONLY "Build header only" ON)
 option(BENCHMARK_DISABLED "Disable benchmarking" OFF)
+option(NO_INSTALL "Disable Install (windows only)" OFF)
 
 if(NOT TARGET rbenchmark)
     add_library(rbenchmark STATIC src/benchmark.cpp)
 endif()
+
 target_include_directories(rbenchmark PUBLIC "include")
 
 target_compile_definitions(rbenchmark PRIVATE $<$<BOOL:${BENCHMARK_DISABLED}>:BENCHMARK_DISABLED>)
@@ -23,7 +25,11 @@ set_target_properties(rbenchmark PROPERTIES
         SOVERSION 1
         PUBLIC_HEADER include/roadar/benchmark.hpp)
 
-if(MSVC) # for windows don't install the library for access permissions mainly (just building is possible)
+if(NOT MSVC AND NO_INSTALL)
+    message(FATAL_ERROR "NO_INSTALL is for Windows only!")
+endif()
+
+if(NO_INSTALL) # for windows install might not work because of access permissions
     message(STATUS "Library will be built in folder ${CMAKE_CURRENT_BINARY_DIR}, please copy include and lib folders to your project")
     # Copy the needed header into the build directory
     add_custom_command(
