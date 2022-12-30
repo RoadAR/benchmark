@@ -260,6 +260,7 @@ bool benchmarkStart(const string &identifier, const string &file, int line) {
   return true;
 }
 
+R_FUNC
 void failWrongNestingKey(const std::string &fullPath, const std::string &idetifier, const string &file, int line) {
   auto keyFromIdx = fullPath.find_last_of(kNestingString);
   std::string lastKeyPath;
@@ -341,6 +342,7 @@ void benchmarkReset() {
 
 // Out measurments
 
+R_FUNC
 double getTotalExecutionTime(const vector<pair<string, MeasurmentInfo>> &measureVector) {
 #ifndef BENCHMARK_DISABLED
   int count = static_cast<int>(measureVector.size());
@@ -368,6 +370,7 @@ double getTotalExecutionTime(const vector<pair<string, MeasurmentInfo>> &measure
 #endif
 }
 
+R_FUNC
 void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipPrefix = true) {
 #ifndef BENCHMARK_DISABLED
   // make Tree structure
@@ -443,6 +446,7 @@ void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipP
 #endif
 }
 
+R_FUNC
 unordered_map<string, MeasurmentInfo> unionMeasurments() {
 //  объеденяем все замеры в один результат
   if (measurmentThreadMap.empty()) {
@@ -468,6 +472,7 @@ unordered_map<string, MeasurmentInfo> unionMeasurments() {
   return res;
 }
 
+R_FUNC
 string formGrid(const vector<vector<string>> &rows) {
   vector<int> maxLengths;
   for (const vector<string> &row : rows) {
@@ -589,26 +594,6 @@ string benchmarkLog(Field withoutFields) {
   return result;
 #else
   return string();
-#endif
-}
-
-ScopedBenchmark::ScopedBenchmark(const std::string& identifier): m_identifier(identifier) {
-#ifndef BENCHMARK_DISABLED
-  benchmarkStart(identifier);
-#endif
-}
-
-void ScopedBenchmark::reset(const std::string& newIdentifier) {
-#ifndef BENCHMARK_DISABLED
-  benchmarkStop(m_identifier);
-  m_identifier = newIdentifier;
-  benchmarkStart(m_identifier);
-#endif
-}
-
-ScopedBenchmark::~ScopedBenchmark() {
-#ifndef BENCHMARK_DISABLED
-  benchmarkStop(m_identifier);
 #endif
 }
 

@@ -7,6 +7,7 @@
 
 #include <string>
 
+#define R_FUNC static
 
 #ifndef BENCHMARK_DISABLED
 #define R_BENCHMARK_START(_identifier_) roadar::benchmarkStart(_identifier_, __FILE__, __LINE__)
@@ -62,12 +63,14 @@ namespace roadar {
 * \param[in] identifier Идентификатор.
 * \return Всегда возвращает `true`
 */
+  R_FUNC
   bool benchmarkStart(const std::string &identifier, const std::string &file = "", int line = 0);
 
 /*!
 * \brief Конец бенчмарка.
 * \param[in] identifier Идентификатор.
 */
+  R_FUNC
   void benchmarkStop(const std::string &identifier, const std::string &file = "", int line = 0);
 
   enum class Field {
@@ -85,26 +88,51 @@ namespace roadar {
 * \brief Бенчмарк-лог.
 * \return Текст лога.
 */
+  R_FUNC
   std::string benchmarkLog(Field withoutFields = Field::none);
 
 /*!
 * \brief Очищает все завершенные замеры
 */
+  R_FUNC
   void benchmarkReset();
 
 
   class ScopedBenchmark {
   public:
-    explicit ScopedBenchmark(const std::string& identifier);
-    void reset(const std::string& newIdentifier);
-    ~ScopedBenchmark();
+    explicit ScopedBenchmark(const std::string& identifier): m_identifier(identifier) {
+#ifndef BENCHMARK_DISABLED
+      benchmarkStart(identifier);
+#endif
+    }
+    void reset(const std::string& newIdentifier) {
+#ifndef BENCHMARK_DISABLED
+      benchmarkStop(m_identifier);
+      m_identifier = newIdentifier;
+      benchmarkStart(m_identifier);
+#endif
+    }
+    ~ScopedBenchmark() {
+#ifndef BENCHMARK_DISABLED
+      benchmarkStop(m_identifier);
+#endif
+    }
   private:
     std::string m_identifier;
   };
 
-// To view result of tracing use https://ui.perfetto.dev/
+//
+/*!
+* \brief Use this function when you want to start capture tracing.
+ * To view result of tracing use https://ui.perfetto.dev/
+* \param[in] writeJsonPath Save results of
+*
+*/
+  R_FUNC
   void benchmarkStartTracing(const std::string &writeJsonPath, const std::string &file = "", int line = 0);
+  R_FUNC
   void benchmarkStopTracing();
+  R_FUNC
   void benchmarkTracingThreadName(const std::string &name);
 } // namespace RoadarNumbers
 #include <algorithm>
@@ -368,6 +396,7 @@ bool benchmarkStart(const string &identifier, const string &file, int line) {
   return true;
 }
 
+R_FUNC
 void failWrongNestingKey(const std::string &fullPath, const std::string &idetifier, const string &file, int line) {
   auto keyFromIdx = fullPath.find_last_of(kNestingString);
   std::string lastKeyPath;
@@ -449,6 +478,7 @@ void benchmarkReset() {
 
 // Out measurments
 
+R_FUNC
 double getTotalExecutionTime(const vector<pair<string, MeasurmentInfo>> &measureVector) {
 #ifndef BENCHMARK_DISABLED
   int count = static_cast<int>(measureVector.size());
@@ -476,6 +506,7 @@ double getTotalExecutionTime(const vector<pair<string, MeasurmentInfo>> &measure
 #endif
 }
 
+R_FUNC
 void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipPrefix = true) {
 #ifndef BENCHMARK_DISABLED
   // make Tree structure
@@ -551,6 +582,7 @@ void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipP
 #endif
 }
 
+R_FUNC
 unordered_map<string, MeasurmentInfo> unionMeasurments() {
 //  объеденяем все замеры в один результат
   if (measurmentThreadMap.empty()) {
@@ -576,6 +608,7 @@ unordered_map<string, MeasurmentInfo> unionMeasurments() {
   return res;
 }
 
+R_FUNC
 string formGrid(const vector<vector<string>> &rows) {
   vector<int> maxLengths;
   for (const vector<string> &row : rows) {
@@ -697,26 +730,6 @@ string benchmarkLog(Field withoutFields) {
   return result;
 #else
   return string();
-#endif
-}
-
-ScopedBenchmark::ScopedBenchmark(const std::string& identifier): m_identifier(identifier) {
-#ifndef BENCHMARK_DISABLED
-  benchmarkStart(identifier);
-#endif
-}
-
-void ScopedBenchmark::reset(const std::string& newIdentifier) {
-#ifndef BENCHMARK_DISABLED
-  benchmarkStop(m_identifier);
-  m_identifier = newIdentifier;
-  benchmarkStart(m_identifier);
-#endif
-}
-
-ScopedBenchmark::~ScopedBenchmark() {
-#ifndef BENCHMARK_DISABLED
-  benchmarkStop(m_identifier);
 #endif
 }
 
