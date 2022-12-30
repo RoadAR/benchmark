@@ -485,7 +485,7 @@ double getTotalExecutionTime(const vector<pair<string, MeasurmentInfo>> &measure
   vector<int> parents(measureVector.size(), -2);
 
   for (int j = 0; j < count; j++) {
-    string prefix = measureVector[j].first;
+    string prefix = measureVector[j].first + kNestingString;
 
     for (int i = 0; i < count; i++) {
       if (i == j || !stringHasPrefix(measureVector[i].first, prefix))
