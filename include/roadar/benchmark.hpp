@@ -7,6 +7,7 @@
 
 #include <string>
 
+#define R_FUNC
 
 #ifndef BENCHMARK_DISABLED
 #define R_BENCHMARK_START(_identifier_) roadar::benchmarkStart(_identifier_, __FILE__, __LINE__)
@@ -62,12 +63,14 @@ namespace roadar {
 * \param[in] identifier Идентификатор.
 * \return Всегда возвращает `true`
 */
+  R_FUNC
   bool benchmarkStart(const std::string &identifier, const std::string &file = "", int line = 0);
 
 /*!
 * \brief Конец бенчмарка.
 * \param[in] identifier Идентификатор.
 */
+  R_FUNC
   void benchmarkStop(const std::string &identifier, const std::string &file = "", int line = 0);
 
   enum class Field {
@@ -85,25 +88,50 @@ namespace roadar {
 * \brief Бенчмарк-лог.
 * \return Текст лога.
 */
+  R_FUNC
   std::string benchmarkLog(Field withoutFields = Field::none);
 
 /*!
 * \brief Очищает все завершенные замеры
 */
+  R_FUNC
   void benchmarkReset();
 
 
   class ScopedBenchmark {
   public:
-    explicit ScopedBenchmark(const std::string& identifier);
-    void reset(const std::string& newIdentifier);
-    ~ScopedBenchmark();
+    explicit ScopedBenchmark(const std::string& identifier): m_identifier(identifier) {
+#ifndef BENCHMARK_DISABLED
+      benchmarkStart(identifier);
+#endif
+    }
+    void reset(const std::string& newIdentifier) {
+#ifndef BENCHMARK_DISABLED
+      benchmarkStop(m_identifier);
+      m_identifier = newIdentifier;
+      benchmarkStart(m_identifier);
+#endif
+    }
+    ~ScopedBenchmark() {
+#ifndef BENCHMARK_DISABLED
+      benchmarkStop(m_identifier);
+#endif
+    }
   private:
     std::string m_identifier;
   };
 
-// To view result of tracing use https://ui.perfetto.dev/
+//
+/*!
+* \brief Use this function when you want to start capture tracing.
+ * To view result of tracing use https://ui.perfetto.dev/
+* \param[in] writeJsonPath Save results of
+*
+*/
+  R_FUNC
   void benchmarkStartTracing(const std::string &writeJsonPath, const std::string &file = "", int line = 0);
+  R_FUNC
   void benchmarkStopTracing();
+  R_FUNC
   void benchmarkTracingThreadName(const std::string &name);
 } // namespace RoadarNumbers
