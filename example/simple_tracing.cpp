@@ -17,7 +17,7 @@ inline void sleep_ms(long long val) {
 
 class SimpleSemaphore {
 public:
-  SimpleSemaphore(uint count = 0, uint maxCount = 5): count_(count), maxCount_(maxCount) {
+  SimpleSemaphore(uint32_t count = 0, uint32_t maxCount = 5): count_(count), maxCount_(maxCount) {
   }
 
   inline void notify() {
@@ -40,8 +40,8 @@ public:
 private:
   std::mutex mtx_;
   std::condition_variable cv_;
-  uint count_;
-  uint maxCount_;
+  uint32_t count_;
+  uint32_t maxCount_;
   long long interruptWaitMs_ = 1;
 };
 
