@@ -23,7 +23,7 @@
 #define R_BENCHMARK_SCOPED_RESET(_identifier_) r_bench.reset(_identifier_)
 #define R_BENCHMARK_SCOPED_L(_identifier_) R_HIDDEN_SCOPED_L_(_identifier_, __LINE__)
 
-#define R_BENCHMARK_LOG(_without_fields_) roadar::benchmarkLog(_without_fields_)
+#define R_BENCHMARK_LOG(_without_fields_, ...) roadar::benchmarkLog(_without_fields_, ##__VA_ARGS__)
 #define R_BENCHMARK_RESET() roadar::benchmarkReset()
 
 // To view result of tracing use https://ui.perfetto.dev/
@@ -84,12 +84,18 @@ namespace roadar {
   };
   R_BENCHMARK_ENUM_FLAG_OPERATORS(Field)
 
+  enum class Format {
+    table = 0,
+    json = 1
+  };
+
 /*!
 * \brief Бенчмарк-лог.
 * \return Текст лога.
 */
   R_FUNC
-  std::string benchmarkLog(Field withoutFields = Field::none);
+  std::string benchmarkLog(Field withoutFields = Field::none, Format format = Format::table,
+                           std::ostream *out = nullptr);
 
 /*!
 * \brief Очищает все завершенные замеры

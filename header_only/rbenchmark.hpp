@@ -23,7 +23,7 @@
 #define R_BENCHMARK_SCOPED_RESET(_identifier_) r_bench.reset(_identifier_)
 #define R_BENCHMARK_SCOPED_L(_identifier_) R_HIDDEN_SCOPED_L_(_identifier_, __LINE__)
 
-#define R_BENCHMARK_LOG(_without_fields_) roadar::benchmarkLog(_without_fields_)
+#define R_BENCHMARK_LOG(_without_fields_, ...) roadar::benchmarkLog(_without_fields_, ##__VA_ARGS__)
 #define R_BENCHMARK_RESET() roadar::benchmarkReset()
 
 // To view result of tracing use https://ui.perfetto.dev/
@@ -84,12 +84,18 @@ namespace roadar {
   };
   R_BENCHMARK_ENUM_FLAG_OPERATORS(Field)
 
+  enum class Format {
+    table = 0,
+    json = 1
+  };
+
 /*!
 * \brief Бенчмарк-лог.
 * \return Текст лога.
 */
   R_FUNC
-  std::string benchmarkLog(Field withoutFields = Field::none);
+  std::string benchmarkLog(Field withoutFields = Field::none, Format format = Format::table,
+                           std::ostream *out = nullptr);
 
 /*!
 * \brief Очищает все завершенные замеры
@@ -304,6 +310,7 @@ struct MeasurmentInfo {
   timestamp_t lastStartTime = 0;
   double lastNTimes[CAPTURE_LAST_N_TIMES] = {};
   unsigned long startNTimesIdx = 0;
+  uint16_t level = 0;
 };
 
 struct MeasurementGroup {
@@ -396,7 +403,7 @@ bool benchmarkStart(const string &identifier, const string &file, int line) {
   return true;
 }
 
-R_FUNC
+static
 void failWrongNestingKey(const std::string &fullPath, const std::string &idetifier, const string &file, int line) {
   auto keyFromIdx = fullPath.find_last_of(kNestingString);
   std::string lastKeyPath;
@@ -478,7 +485,7 @@ void benchmarkReset() {
 
 // Out measurments
 
-R_FUNC
+static
 double getTotalExecutionTime(const vector<pair<string, MeasurmentInfo>> &measureVector) {
 #ifndef BENCHMARK_DISABLED
   int count = static_cast<int>(measureVector.size());
@@ -506,7 +513,7 @@ double getTotalExecutionTime(const vector<pair<string, MeasurmentInfo>> &measure
 #endif
 }
 
-R_FUNC
+static
 void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipPrefix = true) {
 #ifndef BENCHMARK_DISABLED
   // make Tree structure
@@ -533,7 +540,7 @@ void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipP
     }
   }
 
-  // make inset
+  // save level indentation, remove parent names
   for (int i = 0; i < count; i++) {
     string name = measureVector[i].first;
     if (skipPrefix && parents[i] >= 0) {
@@ -543,9 +550,7 @@ void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipP
       measureVector[parents[i]].second.childrenTime += measureVector[i].second.totalTime;
     }
 
-    for (int j = 0; j < levels[i]; j++)
-      name = "  " + name;
-
+    measureVector[i].second.level = levels[i];
     measureVector[i].first = name;
   }
 
@@ -582,7 +587,7 @@ void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipP
 #endif
 }
 
-R_FUNC
+static
 unordered_map<string, MeasurmentInfo> unionMeasurments() {
 //  объеденяем все замеры в один результат
   if (measurmentThreadMap.empty()) {
@@ -608,8 +613,8 @@ unordered_map<string, MeasurmentInfo> unionMeasurments() {
   return res;
 }
 
-R_FUNC
-string formGrid(const vector<vector<string>> &rows) {
+static
+void formGrid(const vector<vector<string>> &rows, ostream &out) {
   vector<int> maxLengths;
   for (const vector<string> &row : rows) {
     for (size_t i = 0; i < row.size(); i++) {
@@ -623,16 +628,13 @@ string formGrid(const vector<vector<string>> &rows) {
   }
 
   int border = 1;
-  stringstream ss;
   for (const vector<string> &row : rows) {
     for (size_t i = 0; i < row.size(); i++) {
       auto alignment = i == 0 ? left : right;
-      ss << setw(maxLengths[i] + border) << alignment << row[i];
+      out << setw(maxLengths[i] + border) << alignment << row[i];
     }
-    ss << endl;
+    out << "\n";
   }
-
-  return ss.str();
 }
 
 template<typename T>
@@ -642,7 +644,12 @@ inline string formatString(stringstream &ss, T val) {
   return ss.str();
 }
 
-string benchmarkLog(Field withoutFields) {
+void generateTableOutput(const vector <pair<string, MeasurmentInfo>> &measureVector, const Field &withoutFields,
+                           double totalExecutionTime, ostream &out);
+void generateJsonOutput(const vector <pair<string, MeasurmentInfo>> &measureVector, const Field &withoutFields,
+                           double totalExecutionTime, ostream &out);
+
+string benchmarkLog(Field withoutFields, Format format, std::ostream *out) {
 #ifndef BENCHMARK_DISABLED
   string errorMsgString;
   if (errorMsg.popError(errorMsgString)) {
@@ -671,12 +678,33 @@ string benchmarkLog(Field withoutFields) {
   totalExecutionTime = getTotalExecutionTime(measureVector);
   sortAsThree(measureVector);
 
+  stringstream result;
+  if (out == nullptr) {
+    out = &result;
+  }
+  switch (format) {
+    case Format::table:
+      generateTableOutput(measureVector, withoutFields, totalExecutionTime, *out);
+      break;
+    case Format::json:
+      generateJsonOutput(measureVector, withoutFields, totalExecutionTime, *out);
+      break;
+  }
+  return result.str();
+#else
+  return string();
+#endif
+}
+
+void generateTableOutput(const vector <pair<string, MeasurmentInfo>> &measureVector, const Field &withoutFields,
+                           double totalExecutionTime, ostream &out) {
   vector<vector<string>> rows;
   rows.reserve(measureVector.size());
   stringstream ss;
+
   for (auto const &k : measureVector) {
     vector<string> row;
-    row.push_back(k.first + ":");
+    row.push_back(string(k.second.level*2, ' ') + k.first + ":");
 
     double totalTime = k.second.totalTime;
     double childrenTime = k.second.childrenTime;
@@ -724,13 +752,86 @@ string benchmarkLog(Field withoutFields) {
 
     rows.push_back(move(row));
   }
-  string result = "\n================== Benchmark ==================\n";
-  result += formGrid(rows);
-  result += "===============================================\n";
-  return result;
-#else
-  return string();
-#endif
+
+  out << "\n================== Benchmark ==================\n";
+  formGrid(rows, out);
+  out << "===============================================\n";
+}
+
+void generateJsonOutput(const vector <pair<string, MeasurmentInfo>> &measureVector, const Field &withoutFields,
+                        double totalExecutionTime, ostream &out) {
+  stringstream ss;
+
+  for (size_t i = 0; i < measureVector.size(); i++) {
+    const auto &name = measureVector[i].first;
+    const auto &info = measureVector[i].second;
+    if (i == 0) {
+      out << "[{";
+    }
+
+    double totalTime = info.totalTime;
+    double childrenTime = info.childrenTime;
+    unsigned long timesExecuted = info.timesExecuted;
+
+    double lastTimesTotal = 0;
+    unsigned long availableLastMeasurementCount = info.startNTimesIdx < CAPTURE_LAST_N_TIMES
+                                                ? info.startNTimesIdx
+                                                : CAPTURE_LAST_N_TIMES;
+    for (unsigned long ii = 0; ii < availableLastMeasurementCount; ii++)
+      lastTimesTotal += info.lastNTimes[ii];
+
+    double lastTimes =
+            availableLastMeasurementCount == 0 ? 0.0 : (lastTimesTotal / (double) availableLastMeasurementCount);
+    double avg = timesExecuted == 0 ? 0.0 : (totalTime / (double) timesExecuted);
+    double percent = totalExecutionTime == 0 ? 0 : totalTime / totalExecutionTime;
+    double missed = (totalExecutionTime == 0 || childrenTime == 0) ? 0 : max(0.0, totalTime - childrenTime) /
+                                                                         totalExecutionTime;
+
+    ss << setprecision(2) << fixed;
+    out << "\"name\":\"" << name << "\",";
+    if (!static_cast<bool>(withoutFields & Field::total)) {
+      out << "\"total\":" << formatString(ss, totalTime / 1000.);
+    }
+    if (!static_cast<bool>(withoutFields & Field::times)) {
+      out << ",\"times\":" << formatString(ss, timesExecuted);
+    }
+    if (!static_cast<bool>(withoutFields & Field::average)) {
+      out << ",\"avg\":" << formatString(ss, avg / 1000.);
+    }
+    if (!static_cast<bool>(withoutFields & Field::lastAverage)) {
+      out << ",\"last avg\":" << formatString(ss, avg / 1000.);
+    }
+
+    ss << setprecision(1) << fixed;
+    if (!static_cast<bool>(withoutFields & Field::percent)) {
+      out << ",\"percent\":" << formatString(ss, int(percent * 1000) / 10.);
+    }
+    if (!static_cast<bool>(withoutFields & Field::percentMissed)) {
+      out << ",\"missed\":" << formatString(ss, int(missed * 1000) / 10.);
+    }
+
+    // make children nesting
+    if (i+1 == measureVector.size()) {
+      out << "}";
+      for (int l = 0; l < info.level; l++) {
+        out << "]}";
+      }
+    } else {
+      auto nextLevel = measureVector[i+1].second.level;
+      if (nextLevel > info.level) {
+        out << ",\"children\":[{";
+      } else if (nextLevel == info.level) {
+        out << "},{";
+      } else { // nextLevel < info.level; // close previous children
+        out << "}";
+        for (int l = 0; l < info.level - nextLevel; l++) {
+          out << "]}";
+        }
+        out << ",{";
+      }
+    }
+  }
+  out << "]";
 }
 
 void benchmarkStartTracing(const std::string &writeJsonPath, const std::string &file, int line) {
