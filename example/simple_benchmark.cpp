@@ -65,6 +65,8 @@ int main(int argc, const char * argv[]) {
   sleep_ms(10);
 
   std::cout << "Done" << std::endl;
-  std::cout << R_BENCHMARK_LOG(roadar::Field::lastAverage) << std::endl;
+  R_BENCHMARK_LOG(roadar::Field::lastAverage, roadar::Format::table, &std::cout);
+  // or
+  // std::cout << R_BENCHMARK_LOG(roadar::Field::lastAverage);
   return 0;
 }
