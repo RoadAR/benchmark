@@ -68,13 +68,28 @@ R_TRACING_STOP();
 - `R_BENCHMARK_SCOPED_L` тоже самое что предыдущий вариант, имя переменной будет уникальным
 
 ## Сборка
-```
-cmake -H. -Bbuild;
-cmake --build build;
+```console
+cmake -S. -Bbuild -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+cmake --install build --prefix install_dir
 ```
 Опции `CMake`:
+- `-DCMAKE_BUILD_TYPE` - нужен для создания корректного install скрипта
 - `-DBUILD_EXAMPLE=ON` - сборка примера вместе с библиотекой
 - `-DBENCHMARK_DISABLE=ON` - с таким флагом замеры не будут производится 
+- `--prefix` - нужен, если нет неоходимости устанавливать в глобальные места, защищенные правами доступа 
+
+## Использование
+### Независимая установка
+```console
+find_package(Benchmark)
+...
+target_link_libraries(target_name PUBLIC roadar::benchmark)
+```
+### Submodules
+```console
+target_link_libraries(target_name PUBLIC rbenchmark)
+```
 
 ## TODO
 
@@ -89,4 +104,5 @@ cmake --build build;
 Чем данная библиотека лучше [google/benchmark](https://github.com/google/benchmark)? Ничем. У этих библиотек разные цели:
 - `google/benchmark` - предназначен для замера производительности определенного участка кода; работает больше как юнит тесты, где мы множество раз запускаем 1 и тот же код
 - `roadar/benchmark` - предназначен для замера участков кода в большом проекте при работе системы; удобно следить за работой системы в реальном времени
+
 
