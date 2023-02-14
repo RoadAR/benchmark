@@ -168,14 +168,12 @@ namespace roadar {
 static const std::string kNestingString = " » ";
 
 
-
-using namespace std;
 typedef unsigned long long timestamp_t;
 
 #ifndef BENCHMARK_DISABLED
   static timestamp_t get_timestamp() {
   //TODO Тут отличие от github версии
-  return chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now().time_since_epoch())
+  return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch())
       .count();
 }
 #endif
@@ -183,7 +181,7 @@ typedef unsigned long long timestamp_t;
 namespace Tracing {
   struct TraceInfo {
     std::string name;
-    uint32_t tid; // thread id
+    std::thread::id tid; // thread id
     timestamp_t startTime;
     timestamp_t duration;
     int stackDepth;
@@ -196,7 +194,7 @@ namespace Tracing {
 
     Serializer(const std::string& filepath, bool flushOnMeasure, std::string &outErrMsg)
             : flushOnMeasure_(flushOnMeasure) {
-      std::lock_guard<mutex> lock(mut_);
+      std::lock_guard<std::mutex> lock(mut_);
       outStream_.open(filepath);
 
       if (outStream_.is_open()) {
@@ -210,7 +208,7 @@ namespace Tracing {
     }
 
     void end() {
-      std::lock_guard<mutex> lock(mut_);
+      std::lock_guard<std::mutex> lock(mut_);
       if (!outStream_.is_open()) return;
       sort(data_.begin(), data_.end(), [](const TraceInfo &a, const TraceInfo &b) -> bool {
         if (a.startTime == b.startTime) {
@@ -223,8 +221,11 @@ namespace Tracing {
           return a.startTime < b.startTime;
         }
       });
-      for (const auto &d :data_) {
-        write(d, true);
+      {
+        std::lock_guard<std::mutex> lock(threadIdMutex_);
+        for (const auto &d: data_) {
+          write(d, true);
+        }
       }
       data_.clear();
       writeFooter();
@@ -233,13 +234,14 @@ namespace Tracing {
 
 
     void saveTrace(TraceInfo info) {
-      std::lock_guard<mutex> lock(mut_);
-      data_.push_back(move(info));
+      std::lock_guard<std::mutex> lock(mut_);
+      data_.push_back(std::move(info));
     }
 
     void write(const TraceInfo& info, bool threadSafe = false) {
       std::stringstream json;
 
+      auto tidIdx = getThreadIdx(info.tid, false);
       json << std::setprecision(3) << std::fixed;
       json << ",{";
       json << "\"cat\":\"function\",";
@@ -247,40 +249,44 @@ namespace Tracing {
       json << "\"name\":\"" << info.name << "\",";
       json << "\"ph\":\"X\",";
       json << "\"pid\":0,";
-      json << "\"tid\":" << info.tid << ",";
+      json << "\"tid\":" << tidIdx << ",";
       json << "\"ts\":" << info.startTime;
       json << "}";
 
       if (threadSafe) {
         write(json.str(), flushOnMeasure_);
       } else {
-        std::lock_guard<mutex> lock(mut_);
+        std::lock_guard<std::mutex> lock(mut_);
         write(json.str(), flushOnMeasure_);
       }
     }
 
-    void writeThreadName(uint32_t tid, const std::string &name) {
+    void writeThreadName(const std::thread::id &tid, const std::string &name) {
       std::stringstream json;
 
+      auto tidIdx = getThreadIdx(tid, true);
       json << std::setprecision(3) << std::fixed;
       json << ",{";
       json << "\"cat\":\"function\",";
       json << "\"name\":\"thread_name\",";
       json << "\"ph\":\"M\",";
       json << "\"pid\":0,";
-      json << "\"tid\":" << tid << ",";
+      json << "\"tid\":" << tidIdx << ",";
       json << "\"args\":{\"name\":\"" << name << "\"}";
       json << "}";
 
-      std::lock_guard<mutex> lock(mut_);
+      std::lock_guard<std::mutex> lock(mut_);
       write(json.str(), flushOnMeasure_);
     }
 
   private:
     std::mutex mut_;
+    std::mutex threadIdMutex_;
     std::ofstream outStream_;
     bool flushOnMeasure_;
     std::vector<TraceInfo> data_;
+    std::unordered_map<std::thread::id, int32_t> threadIdxMap_;
+    int32_t lastThreadIdx_ = 0;
 
     void writeHeader() {
       outStream_ << R"({"otherData": {},"traceEvents":[{})";
@@ -296,6 +302,16 @@ namespace Tracing {
       if (!outStream_.is_open()) return;
       outStream_ << str;
       if(flush) outStream_.flush();
+    }
+
+    int32_t getThreadIdx(const std::thread::id &id, bool lock) {
+      if (lock) threadIdMutex_.lock();
+      if (threadIdxMap_.count(id) == 0) {
+        threadIdxMap_[id] = lastThreadIdx_++;
+      }
+      auto result = threadIdxMap_.at(id);
+      if (lock) threadIdMutex_.unlock();
+      return result;
     }
   };
 }
@@ -318,26 +334,26 @@ struct MeasurementGroup {
   MeasurementGroup(MeasurementGroup const &val) {
     map = val.map;
   };
-  unordered_map<string, MeasurmentInfo> map = {};
-  uint32_t tid = 0;
-  string parentKey;
+  std::unordered_map<std::string, MeasurmentInfo> map = {};
+  std::thread::id tid;
+  std::string parentKey;
 };
 
 class ErrorMsg {
 public:
   ErrorMsg() = default;
-  void update(const std::string &msg, const string &file, int line) {
-    lock_guard<mutex> lock(mut_);
+  void update(const std::string &msg, const std::string &file, int line) {
+    std::lock_guard<std::mutex> lock(mut_);
     if (msg_.empty()) {
       msg_ = msg;
       if (!file.empty()) {
-        msg_ += "\nLocation: " + string(file) + " > line: " + to_string(line);
+        msg_ += "\nLocation: " + std::string(file) + " > line: " + std::to_string(line);
       }
     }
   }
 
   bool popError(std::string &outMsg) {
-    lock_guard<mutex> lock(mut_);
+    std::lock_guard<std::mutex> lock(mut_);
     if (msg_.empty()) {
       return false;
     }
@@ -346,8 +362,8 @@ public:
     return true;
   }
 private:
-  mutex mut_;
-  string msg_;
+  std::mutex mut_;
+  std::string msg_;
 };
 
 inline bool stringHasSuffix(std::string const &value, std::string const &suffix) {
@@ -363,25 +379,22 @@ inline bool stringHasPrefix(const std::string& str, const std::string& prefix) {
 }
 
 // without shared_ptr this map fails on Win machine
-static unordered_map<uint32_t, shared_ptr<MeasurementGroup>> measurmentThreadMap;
-static mutex mut;
+static std::unordered_map<std::thread::id, std::unique_ptr<MeasurementGroup>> measurmentThreadMap;
+static std::mutex mut;
 static ErrorMsg errorMsg;
 static std::unique_ptr<Tracing::Serializer> tracing;
 
-inline uint32_t get_tid() {
-  return (uint32_t)std::hash<std::thread::id>()(std::this_thread::get_id());
-}
 inline MeasurementGroup &getMeasurmentGroup() {
-  uint32_t tid = get_tid();
-  lock_guard<mutex> lock(mut);
+  auto tid = std::this_thread::get_id();
+  std::lock_guard<std::mutex> lock(mut);
   if (measurmentThreadMap.count(tid) == 0) {
-    measurmentThreadMap.emplace(tid, make_shared<MeasurementGroup>());
+    measurmentThreadMap.emplace(tid, std::unique_ptr<MeasurementGroup>(new MeasurementGroup()));
     measurmentThreadMap[tid]->tid = tid;
   }
   return *measurmentThreadMap[tid].get();
 }
 
-bool benchmarkStart(const string &identifier, const string &file, int line) {
+bool benchmarkStart(const std::string &identifier, const std::string &file, int line) {
 #ifndef BENCHMARK_DISABLED
 
   auto &measurmentGroup = getMeasurmentGroup();
@@ -404,19 +417,19 @@ bool benchmarkStart(const string &identifier, const string &file, int line) {
 }
 
 static
-void failWrongNestingKey(const std::string &fullPath, const std::string &idetifier, const string &file, int line) {
+void failWrongNestingKey(const std::string &fullPath, const std::string &idetifier, const std::string &file, int line) {
   auto keyFromIdx = fullPath.find_last_of(kNestingString);
   std::string lastKeyPath;
-  if (keyFromIdx == string::npos) {
+  if (keyFromIdx == std::string::npos) {
     lastKeyPath = fullPath;
   } else {
     lastKeyPath = fullPath.substr(keyFromIdx+1);
   }
-  string msg = "benchmarkStop(\"" + idetifier + "\") not matched with last key \"" + lastKeyPath + "\"";
+  std::string msg = "benchmarkStop(\"" + idetifier + "\") not matched with last key \"" + lastKeyPath + "\"";
   errorMsg.update(msg, file, line);
 }
 
-void benchmarkStop(const string &identifier, const string &file, int line) {
+void benchmarkStop(const std::string &identifier, const std::string &file, int line) {
 #ifndef BENCHMARK_DISABLED
   auto &measurmentGroup = getMeasurmentGroup();
   auto &measurmentMap = measurmentGroup.map;
@@ -437,7 +450,7 @@ void benchmarkStop(const string &identifier, const string &file, int line) {
   }
 
   long toIdx = (long)measurmentGroup.parentKey.length() - (long)identifier.length() - (long)kNestingString.length();
-  measurmentGroup.parentKey = measurmentGroup.parentKey.substr(0, max((long)0, toIdx));
+  measurmentGroup.parentKey = measurmentGroup.parentKey.substr(0, std::max((long)0, toIdx));
 
   auto dt = get_timestamp() - info.lastStartTime;
   auto ts = info.lastStartTime;
@@ -455,7 +468,7 @@ void benchmarkStop(const string &identifier, const string &file, int line) {
 
 void benchmarkReset() {
 #ifndef BENCHMARK_DISABLED
-  lock_guard<mutex> lock(mut);
+  std::lock_guard<std::mutex> lock(mut);
   for (auto &kv : measurmentThreadMap) {
     auto &map = kv.second->map;
     for (auto it = map.begin(); it != map.end(); ) {
@@ -486,13 +499,13 @@ void benchmarkReset() {
 // Out measurments
 
 static
-double getTotalExecutionTime(const vector<pair<string, MeasurmentInfo>> &measureVector) {
+double getTotalExecutionTime(const std::vector<std::pair<std::string, MeasurmentInfo>> &measureVector) {
 #ifndef BENCHMARK_DISABLED
   int count = static_cast<int>(measureVector.size());
-  vector<int> parents(measureVector.size(), -2);
+  std::vector<int> parents(measureVector.size(), -2);
 
   for (int j = 0; j < count; j++) {
-    string prefix = measureVector[j].first + kNestingString;
+    std::string prefix = measureVector[j].first + kNestingString;
 
     for (int i = 0; i < count; i++) {
       if (i == j || !stringHasPrefix(measureVector[i].first, prefix))
@@ -514,18 +527,18 @@ double getTotalExecutionTime(const vector<pair<string, MeasurmentInfo>> &measure
 }
 
 static
-void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipPrefix = true) {
+void sortAsThree(std::vector<std::pair<std::string, MeasurmentInfo>> &measureVector, bool skipPrefix = true) {
 #ifndef BENCHMARK_DISABLED
   // make Tree structure
   int count = (int)measureVector.size();
 
-  vector<int> levels(measureVector.size(), 0);
-  vector<int> parents(measureVector.size(), -2);
-  vector<string> origNames(measureVector.size());
+  std::vector<int> levels(measureVector.size(), 0);
+  std::vector<int> parents(measureVector.size(), -2);
+  std::vector<std::string> origNames(measureVector.size());
 
   int maxLevel = 0;
   for (int j = 0; j < count; j++) {
-    string prefix = measureVector[j].first;
+    std::string prefix = measureVector[j].first;
     origNames[j] = prefix;
     prefix += kNestingString;
 
@@ -542,7 +555,7 @@ void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipP
 
   // save level indentation, remove parent names
   for (int i = 0; i < count; i++) {
-    string name = measureVector[i].first;
+    std::string name = measureVector[i].first;
     if (skipPrefix && parents[i] >= 0) {
       size_t from = origNames[parents[i]].size();
       from += kNestingString.size();
@@ -555,7 +568,7 @@ void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipP
   }
 
   // save exchange order, and then do exchange
-  vector<int> order(count);
+  std::vector<int> order(count);
   for (int i = 0; i < count; i++)
     order[i] = i;
 
@@ -572,7 +585,7 @@ void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipP
       }
       int toIdx = parentIdx + 1;
       if (toIdx > i) toIdx--;
-      pair<string, MeasurmentInfo> measure = measureVector[i];
+      std::pair<std::string, MeasurmentInfo> measure = measureVector[i];
       measureVector.erase(measureVector.begin() + i);
       measureVector.insert(measureVector.begin() + toIdx, measure);
 
@@ -588,12 +601,12 @@ void sortAsThree(vector<pair<string, MeasurmentInfo>> &measureVector, bool skipP
 }
 
 static
-unordered_map<string, MeasurmentInfo> unionMeasurments() {
+std::unordered_map<std::string, MeasurmentInfo> unionMeasurments() {
 //  объеденяем все замеры в один результат
   if (measurmentThreadMap.empty()) {
     return {};
   }
-  unordered_map<string, MeasurmentInfo> res;
+  std::unordered_map<std::string, MeasurmentInfo> res;
   for (auto &threadMeasurments : measurmentThreadMap) {
     const auto &measurmentsMap = threadMeasurments.second->map;
     if (res.empty()) {
@@ -614,9 +627,9 @@ unordered_map<string, MeasurmentInfo> unionMeasurments() {
 }
 
 static
-void formGrid(const vector<vector<string>> &rows, ostream &out) {
-  vector<int> maxLengths;
-  for (const vector<string> &row : rows) {
+void formGrid(const std::vector<std::vector<std::string>> &rows, std::ostream &out) {
+  std::vector<int> maxLengths;
+  for (const std::vector<std::string> &row : rows) {
     for (size_t i = 0; i < row.size(); i++) {
       int s = (int)row[i].size();
       if (i >= maxLengths.size()) {
@@ -628,48 +641,53 @@ void formGrid(const vector<vector<string>> &rows, ostream &out) {
   }
 
   int border = 1;
-  for (const vector<string> &row : rows) {
+  for (const std::vector<std::string> &row : rows) {
     for (size_t i = 0; i < row.size(); i++) {
-      auto alignment = i == 0 ? left : right;
-      out << setw(maxLengths[i] + border) << alignment << row[i];
+      auto alignment = i == 0 ? std::left : std::right;
+      out << std::setw(maxLengths[i] + border) << alignment << row[i];
     }
     out << "\n";
   }
 }
 
 template<typename T>
-inline string formatString(stringstream &ss, T val) {
+inline std::string formatString(std::stringstream &ss, T val) {
   ss.str("");
   ss << val;
   return ss.str();
 }
 
-void generateTableOutput(const vector <pair<string, MeasurmentInfo>> &measureVector, const Field &withoutFields,
-                           double totalExecutionTime, ostream &out);
-void generateJsonOutput(const vector <pair<string, MeasurmentInfo>> &measureVector, const Field &withoutFields,
-                           double totalExecutionTime, ostream &out);
+void generateTableOutput(const std::vector <std::pair<std::string, MeasurmentInfo>> &measureVector, const Field &withoutFields,
+                           double totalExecutionTime, std::ostream &out);
+void generateJsonOutput(const std::vector <std::pair<std::string, MeasurmentInfo>> &measureVector, const Field &withoutFields,
+                           double totalExecutionTime, std::ostream &out);
 
-string benchmarkLog(Field withoutFields, Format format, std::ostream *out) {
+std::string benchmarkLog(Field withoutFields, Format format, std::ostream *out) {
 #ifndef BENCHMARK_DISABLED
-  string errorMsgString;
+  std::string errorMsgString;
   if (errorMsg.popError(errorMsgString)) {
-    string msg = "\n=============== Benchmark Error ===============\n";
+    std::string msg = "\n=============== Benchmark Error ===============\n";
     msg += errorMsgString;
     msg += "\n===============================================\n";
     benchmarkReset();
-    return msg;
+    if (out) {
+      *out << msg;
+      return "";
+    } else {
+      return msg;
+    }
   }
 
-  vector<pair<string, MeasurmentInfo>> measureVector;
+  std::vector<std::pair<std::string, MeasurmentInfo>> measureVector;
   {
-    lock_guard<mutex> lock(mut);
+    std::lock_guard<std::mutex> lock(mut);
     const auto measurements = unionMeasurments();
     for (const auto &k: measurements)
       measureVector.emplace_back(k);
   }
 
   sort(measureVector.begin(), measureVector.end(),
-       [](const pair<string, MeasurmentInfo> &a, const pair<string, MeasurmentInfo> &b) -> bool {
+       [](const std::pair<std::string, MeasurmentInfo> &a, const std::pair<std::string, MeasurmentInfo> &b) -> bool {
          return a.second.totalTime > b.second.totalTime;
        });
 
@@ -678,7 +696,7 @@ string benchmarkLog(Field withoutFields, Format format, std::ostream *out) {
   totalExecutionTime = getTotalExecutionTime(measureVector);
   sortAsThree(measureVector);
 
-  stringstream result;
+  std::stringstream result;
   if (out == nullptr) {
     out = &result;
   }
@@ -696,15 +714,15 @@ string benchmarkLog(Field withoutFields, Format format, std::ostream *out) {
 #endif
 }
 
-void generateTableOutput(const vector <pair<string, MeasurmentInfo>> &measureVector, const Field &withoutFields,
-                           double totalExecutionTime, ostream &out) {
-  vector<vector<string>> rows;
+void generateTableOutput(const std::vector <std::pair<std::string, MeasurmentInfo>> &measureVector, const Field &withoutFields,
+                           double totalExecutionTime, std::ostream &out) {
+  std::vector<std::vector<std::string>> rows;
   rows.reserve(measureVector.size());
-  stringstream ss;
+  std::stringstream ss;
 
   for (auto const &k : measureVector) {
-    vector<string> row;
-    row.push_back(string(k.second.level*2, ' ') + k.first + ":");
+    std::vector<std::string> row;
+    row.push_back(std::string(k.second.level*2, ' ') + k.first + ":");
 
     double totalTime = k.second.totalTime;
     double childrenTime = k.second.childrenTime;
@@ -720,9 +738,9 @@ void generateTableOutput(const vector <pair<string, MeasurmentInfo>> &measureVec
     double lastTimes = avaiableLastMeasurmentCount == 0 ? 0.0 : (lastTimesTotal / (double)avaiableLastMeasurmentCount);
     double avg = timesExecuted == 0 ? 0.0 : (totalTime / (double)timesExecuted);
     double percent = totalExecutionTime == 0 ? 0 : totalTime / totalExecutionTime;
-    double missed = (totalExecutionTime == 0 || childrenTime == 0) ? 0 : max(0.0, totalTime - childrenTime) / totalExecutionTime;
+    double missed = (totalExecutionTime == 0 || childrenTime == 0) ? 0 : std::max(0.0, totalTime - childrenTime) / totalExecutionTime;
 
-    ss << setprecision(2) << fixed;
+    ss << std::setprecision(2) << std::fixed;
     if (!static_cast<bool>(withoutFields & Field::total)) {
       row.emplace_back("   total:");
       row.emplace_back(formatString(ss, totalTime / 1000.));
@@ -740,7 +758,7 @@ void generateTableOutput(const vector <pair<string, MeasurmentInfo>> &measureVec
       row.emplace_back(formatString(ss, lastTimes / 1000.));
     }
 
-    ss << setprecision(1) << fixed;
+    ss << std::setprecision(1) << std::fixed;
     if (!static_cast<bool>(withoutFields & Field::percent)) {
       row.emplace_back("   percent:");
       row.emplace_back(formatString(ss, int(percent * 1000) / 10.) + " %");
@@ -758,9 +776,9 @@ void generateTableOutput(const vector <pair<string, MeasurmentInfo>> &measureVec
   out << "===============================================\n";
 }
 
-void generateJsonOutput(const vector <pair<string, MeasurmentInfo>> &measureVector, const Field &withoutFields,
-                        double totalExecutionTime, ostream &out) {
-  stringstream ss;
+void generateJsonOutput(const std::vector <std::pair<std::string, MeasurmentInfo>> &measureVector, const Field &withoutFields,
+                        double totalExecutionTime, std::ostream &out) {
+  std::stringstream ss;
 
   for (size_t i = 0; i < measureVector.size(); i++) {
     const auto &name = measureVector[i].first;
@@ -784,10 +802,10 @@ void generateJsonOutput(const vector <pair<string, MeasurmentInfo>> &measureVect
             availableLastMeasurementCount == 0 ? 0.0 : (lastTimesTotal / (double) availableLastMeasurementCount);
     double avg = timesExecuted == 0 ? 0.0 : (totalTime / (double) timesExecuted);
     double percent = totalExecutionTime == 0 ? 0 : totalTime / totalExecutionTime;
-    double missed = (totalExecutionTime == 0 || childrenTime == 0) ? 0 : max(0.0, totalTime - childrenTime) /
+    double missed = (totalExecutionTime == 0 || childrenTime == 0) ? 0 : std::max(0.0, totalTime - childrenTime) /
                                                                          totalExecutionTime;
 
-    ss << setprecision(2) << fixed;
+    ss << std::setprecision(2) << std::fixed;
     out << "\"name\":\"" << name << "\",";
     if (!static_cast<bool>(withoutFields & Field::total)) {
       out << "\"total\":" << formatString(ss, totalTime / 1000.);
@@ -802,7 +820,7 @@ void generateJsonOutput(const vector <pair<string, MeasurmentInfo>> &measureVect
       out << ",\"last avg\":" << formatString(ss, avg / 1000.);
     }
 
-    ss << setprecision(1) << fixed;
+    ss << std::setprecision(1) << std::fixed;
     if (!static_cast<bool>(withoutFields & Field::percent)) {
       out << ",\"percent\":" << formatString(ss, int(percent * 1000) / 10.);
     }
@@ -835,21 +853,21 @@ void generateJsonOutput(const vector <pair<string, MeasurmentInfo>> &measureVect
 }
 
 void benchmarkStartTracing(const std::string &writeJsonPath, const std::string &file, int line) {
-  lock_guard<mutex> lock(mut);
-  string err;
-  tracing = unique_ptr<Tracing::Serializer>(new Tracing::Serializer(writeJsonPath, false, err));
+  std::lock_guard<std::mutex> lock(mut);
+  std::string err;
+  tracing = std::unique_ptr<Tracing::Serializer>(new Tracing::Serializer(writeJsonPath, false, err));
   if (!err.empty()) {
     tracing.reset(nullptr);
     errorMsg.update(err, file, line);
   }
 }
 void benchmarkStopTracing() {
-  lock_guard<mutex> lock(mut);
+  std::lock_guard<std::mutex> lock(mut);
   tracing.reset(nullptr);
 }
 
 void benchmarkTracingThreadName(const std::string &name) {
-  if (tracing) tracing->writeThreadName(get_tid(), name);
+  if (tracing) tracing->writeThreadName(std::this_thread::get_id(), name);
 }
 
 } // namespace roadar
