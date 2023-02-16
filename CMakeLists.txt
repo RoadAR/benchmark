@@ -87,6 +87,8 @@ if (BUILD_HEADER_ONLY)
     )
 endif ()
 
+add_library(roadar::benchmark ALIAS ${TARGET_NAME})
+
 if (BUILD_EXAMPLE)
     set(CMAKE_CXX_FLAGS -pthread)
     add_executable(bench_example example/simple_benchmark.cpp)
