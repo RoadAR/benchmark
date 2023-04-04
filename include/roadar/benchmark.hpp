@@ -12,6 +12,7 @@
 #ifndef BENCHMARK_DISABLED
 #define R_BENCHMARK_START(_identifier_) roadar::benchmarkStart(_identifier_, __FILE__, __LINE__)
 #define R_BENCHMARK_STOP(_identifier_) roadar::benchmarkStop(_identifier_, __FILE__, __LINE__)
+//-V:R_BENCHMARK:1044
 #define R_BENCHMARK(_identifier_)                                  \
  for (bool _r_bench_bool = R_BENCHMARK_START(_identifier_); _r_bench_bool; _r_bench_bool = false, R_BENCHMARK_STOP(_identifier_))
 
