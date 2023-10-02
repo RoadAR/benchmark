@@ -664,7 +664,7 @@ void generateJsonOutput(const std::vector <std::pair<std::string, MeasurmentInfo
                                                                          totalExecutionTime;
 
     ss << std::setprecision(2) << std::fixed;
-    out << "\"name\":\"" << name << "\",";
+    out << "\"name\":\"" << name << "\"";
     if (!static_cast<bool>(withoutFields & Field::total)) {
       out << "\"total\":" << formatString(ss, totalTime / 1000.);
     }
