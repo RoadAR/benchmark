@@ -121,31 +121,6 @@ inline MeasurementGroup &getMeasurementGroup() {
   return *measurementThreadMap[tid].get();
 }
 
-#ifdef BENCHMARK_FIX_NESTING
-static
-void stopMeasurements(MeasurementMap &measurementMap, const std::vector<std::string> &measureKey, size_t cleanFromIndex) {
-  MeasurementMap *mapRef = &measurementMap;
-  for (size_t i = 0; measureKey.size(); i++) {
-    MeasurementInfo &info = (*mapRef)[measureKey[i]];
-    if (cleanFromIndex >= i) {
-      info.lastStartTime = 0;
-    }
-    mapRef = &info.children;
-  }
-}
-static 
-void removeRepeatMeasurements(const std::string &identifier, MeasurementGroup &group) {
-  size_t nestingCount = group.measureKey.size();
-  for (size_t i = 0; i < nestingCount; i++) {
-    if (group.measureKey[i] == identifier) { // вероятно снаружи неправильно завершен замер
-      stopMeasurements(group.map, group.measureKey, i);
-      group.measureKey.erase(group.measureKey.begin() + i, group.measureKey.end());
-      break;
-    }
-  }
-}
-#endif
-
 inline std::string joined(const std::vector<std::string> &array, const std::string &separator = " » ") {
   std::string joinedString;
   for (size_t i = 0; i < array.size(); i++) {
@@ -157,14 +132,7 @@ inline std::string joined(const std::vector<std::string> &array, const std::stri
 
 bool benchmarkStart(const std::string &identifier, const std::string &file, int line) {
 #ifndef BENCHMARK_DISABLED
-
   auto &group = getMeasurementGroup();
-//  auto &measurementMap = measurementGroup.map;
-
-#ifdef BENCHMARK_FIX_NESTING
-  removeRepeatMeasurements(identifier, group);
-#endif
-
   MeasurementInfo &info = *group.getLast(identifier);
   if (info.lastStartTime > 0) {
     std::string fullPath = joined(group.measureKey);
