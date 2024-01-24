@@ -80,8 +80,9 @@ namespace roadar {
     times         = 1<<1,   // 0x02
     average       = 1<<2,   // 0x04
     lastAverage   = 1<<3,   // 0x08
-    percent       = 1<<4,   // 0x10
-    percentMissed = 1<<5    // 0x20
+    running       = 1<<4,   // 0x10
+    percent       = 1<<5,   // 0x20
+    percentMissed = 1<<6    // 0x30
   };
   R_BENCHMARK_ENUM_FLAG_OPERATORS(Field)
 
@@ -141,4 +142,4 @@ namespace roadar {
   void benchmarkStopTracing();
   R_FUNC
   void benchmarkTracingThreadName(const std::string &name);
-} // namespace RoadarNumbers
+} // namespace roadar

@@ -26,7 +26,7 @@ option(BENCHMARK_DISABLED "Disable benchmarking" OFF)
 option(NO_INSTALL "Disable Install (windows only)" OFF)
 
 if(NOT TARGET ${TARGET_NAME})
-    add_library(${TARGET_NAME} STATIC src/benchmark.cpp)
+    add_library(${TARGET_NAME} STATIC src/benchmark.cpp src/tracing.cpp)
 endif()
 
 target_include_directories(${TARGET_NAME}

@@ -1,4 +1,5 @@
 #include <roadar/benchmark.hpp>
+#include <roadar/tracing.hpp>
 #include <algorithm>
 #include <fstream>
 #include <iostream>
@@ -23,10 +24,10 @@
 // -------------------------------------------------
 
 namespace roadar {
-static const std::string kNestingString = " » ";
-
 
 typedef unsigned long long timestamp_t;
+struct MeasurementInfo;
+typedef std::unordered_map<std::string, MeasurementInfo> MeasurementMap;
 
 #ifndef BENCHMARK_DISABLED
   static timestamp_t get_timestamp() {
@@ -36,148 +37,10 @@ typedef unsigned long long timestamp_t;
 }
 #endif
 
-namespace Tracing {
-  struct TraceInfo {
-    std::string name;
-    std::thread::id tid; // thread id
-    timestamp_t startTime;
-    timestamp_t duration;
-    int stackDepth;
-  };
-
-  class Serializer {
-  public:
-    Serializer(const Serializer&) = delete;
-    Serializer(Serializer&&) = delete;
-
-    Serializer(const std::string& filepath, bool flushOnMeasure, std::string &outErrMsg)
-            : flushOnMeasure_(flushOnMeasure) {
-      std::lock_guard<std::mutex> lock(mut_);
-      outStream_.open(filepath);
-
-      if (outStream_.is_open()) {
-        writeHeader();
-      } else {
-        outErrMsg = "RBenchmark::Tracing::Serializer could not open results file:\n" + filepath;
-      }
-    }
-    ~Serializer() {
-      end();
-    }
-
-    void end() {
-      std::lock_guard<std::mutex> lock(mut_);
-      if (!outStream_.is_open()) return;
-      sort(data_.begin(), data_.end(), [](const TraceInfo &a, const TraceInfo &b) -> bool {
-        if (a.startTime == b.startTime) {
-          if (a.duration == b.duration) {
-            return a.stackDepth < b.stackDepth;
-          } else {
-            return a.duration > b.duration;
-          }
-        } else {
-          return a.startTime < b.startTime;
-        }
-      });
-      {
-        std::lock_guard<std::mutex> lock(threadIdMutex_);
-        for (const auto &d: data_) {
-          write(d, true);
-        }
-      }
-      data_.clear();
-      writeFooter();
-      outStream_.close();
-    }
-
-
-    void saveTrace(TraceInfo info) {
-      std::lock_guard<std::mutex> lock(mut_);
-      data_.push_back(std::move(info));
-    }
-
-    void write(const TraceInfo& info, bool threadSafe = false) {
-      std::stringstream json;
-
-      auto tidIdx = getThreadIdx(info.tid, false);
-      json << std::setprecision(3) << std::fixed;
-      json << ",{";
-      json << "\"cat\":\"function\",";
-      json << "\"dur\":" << (info.duration) << ',';
-      json << "\"name\":\"" << info.name << "\",";
-      json << "\"ph\":\"X\",";
-      json << "\"pid\":0,";
-      json << "\"tid\":" << tidIdx << ",";
-      json << "\"ts\":" << info.startTime;
-      json << "}";
-
-      if (threadSafe) {
-        write(json.str(), flushOnMeasure_);
-      } else {
-        std::lock_guard<std::mutex> lock(mut_);
-        write(json.str(), flushOnMeasure_);
-      }
-    }
-
-    void writeThreadName(const std::thread::id &tid, const std::string &name) {
-      std::stringstream json;
-
-      auto tidIdx = getThreadIdx(tid, true);
-      json << std::setprecision(3) << std::fixed;
-      json << ",{";
-      json << "\"cat\":\"function\",";
-      json << "\"name\":\"thread_name\",";
-      json << "\"ph\":\"M\",";
-      json << "\"pid\":0,";
-      json << "\"tid\":" << tidIdx << ",";
-      json << "\"args\":{\"name\":\"" << name << "\"}";
-      json << "}";
-
-      std::lock_guard<std::mutex> lock(mut_);
-      write(json.str(), flushOnMeasure_);
-    }
-
-  private:
-    std::mutex mut_;
-    std::mutex threadIdMutex_;
-    std::ofstream outStream_;
-    bool flushOnMeasure_;
-    std::vector<TraceInfo> data_;
-    std::unordered_map<std::thread::id, int32_t> threadIdxMap_;
-    int32_t lastThreadIdx_ = 0;
-
-    void writeHeader() {
-      outStream_ << R"({"otherData": {},"traceEvents":[{})";
-      outStream_.flush();
-    }
-
-    void writeFooter() {
-      outStream_ << "]}";
-      outStream_.flush();
-    }
-
-    void write(const std::string &str, bool flush) {
-      if (!outStream_.is_open()) return;
-      outStream_ << str;
-      if(flush) outStream_.flush();
-    }
-
-    int32_t getThreadIdx(const std::thread::id &id, bool lock) {
-      if (lock) threadIdMutex_.lock();
-      if (threadIdxMap_.count(id) == 0) {
-        threadIdxMap_[id] = lastThreadIdx_++;
-      }
-      auto result = threadIdxMap_.at(id);
-      if (lock) threadIdMutex_.unlock();
-      return result;
-    }
-  };
-}
-
 /*!
  * \brief Информация о замерах.
  */
-struct MeasurmentInfo {
+struct MeasurementInfo {
   double totalTime = 0;
   double childrenTime = 0;
   unsigned long timesExecuted = 0;
@@ -185,6 +48,10 @@ struct MeasurmentInfo {
   double lastNTimes[CAPTURE_LAST_N_TIMES] = {};
   unsigned long startNTimesIdx = 0;
   uint16_t level = 0;
+  MeasurementMap children;
+  
+  /// нам нужна сортировка по занятому времени, используется только при выводе результата
+  std::vector<std::string> childrenOrder;
 };
 
 struct MeasurementGroup {
@@ -192,9 +59,24 @@ struct MeasurementGroup {
   MeasurementGroup(MeasurementGroup const &val) {
     map = val.map;
   };
-  std::unordered_map<std::string, MeasurmentInfo> map = {};
+  MeasurementMap map = {};
   std::thread::id tid;
-  std::string parentKey;
+  std::vector<std::string> measureKey;
+  
+  MeasurementInfo *getLast(const std::string &addNewKey = "") {
+    MeasurementMap *mapRef = &map;
+    MeasurementInfo *info = nullptr;
+    for (const auto &key : measureKey) {
+      info = &(mapRef->at(key));
+      mapRef = &(info->children);
+    }
+
+    if (!addNewKey.empty()) {
+      info = &(*mapRef)[addNewKey];
+      measureKey.push_back(addNewKey);
+    }
+    return info;
+  }
 };
 
 class ErrorMsg {
@@ -236,79 +118,96 @@ inline bool stringHasPrefix(const std::string& str, const std::string& prefix) {
     return res.first == prefix.end();
 }
 
-// without shared_ptr this map fails on Win machine
-static std::unordered_map<std::thread::id, std::unique_ptr<MeasurementGroup>> measurmentThreadMap;
+// without unique_ptr this map fails on Win machine
+static std::unordered_map<std::thread::id, std::unique_ptr<MeasurementGroup>> measurementThreadMap;
 static std::mutex mut;
 static ErrorMsg errorMsg;
 static std::unique_ptr<Tracing::Serializer> tracing;
 
-inline MeasurementGroup &getMeasurmentGroup() {
+inline MeasurementGroup &getMeasurementGroup() {
   auto tid = std::this_thread::get_id();
   std::lock_guard<std::mutex> lock(mut);
-  if (measurmentThreadMap.count(tid) == 0) {
-    measurmentThreadMap.emplace(tid, std::unique_ptr<MeasurementGroup>(new MeasurementGroup()));
-    measurmentThreadMap[tid]->tid = tid;
+  if (measurementThreadMap.count(tid) == 0) {
+    measurementThreadMap.emplace(tid, std::unique_ptr<MeasurementGroup>(new MeasurementGroup()));
+    measurementThreadMap[tid]->tid = tid;
   }
-  return *measurmentThreadMap[tid].get();
+  return *measurementThreadMap[tid].get();
+}
+
+#ifdef BENCHMARK_FIX_NESTING
+static
+void stopMeasurements(MeasurementMap &measurementMap, const std::vector<std::string> &measureKey, size_t cleanFromIndex) {
+  MeasurementMap *mapRef = &measurementMap;
+  for (size_t i = 0; measureKey.size(); i++) {
+    MeasurementInfo &info = (*mapRef)[measureKey[i]];
+    if (cleanFromIndex >= i) {
+      info.lastStartTime = 0;
+    }
+    mapRef = &info.children;
+  }
+}
+static 
+void removeRepeatMeasurements(const std::string &identifier, MeasurementGroup &group) {
+  size_t nestingCount = group.measureKey.size();
+  for (size_t i = 0; i < nestingCount; i++) {
+    if (group.measureKey[i] == identifier) { // вероятно снаружи неправильно завершен замер
+      stopMeasurements(group.map, group.measureKey, i);
+      group.measureKey.erase(group.measureKey.begin() + i, group.measureKey.end());
+      break;
+    }
+  }
+}
+#endif
+
+inline std::string joined(const std::vector<std::string> &array, const std::string &separator = " » ") {
+  std::string joinedString;
+  for (size_t i = 0; i < array.size(); i++) {
+    if (i > 0) joinedString += separator;
+    joinedString += array[i];
+  }
+  return joinedString;
 }
 
 bool benchmarkStart(const std::string &identifier, const std::string &file, int line) {
 #ifndef BENCHMARK_DISABLED
 
-  auto &measurmentGroup = getMeasurmentGroup();
-  auto &measurmentMap = measurmentGroup.map;
-  if (measurmentGroup.parentKey.empty()) {
-    measurmentGroup.parentKey += identifier;
-  } else {
-    measurmentGroup.parentKey += kNestingString + identifier;
-  }
+  auto &group = getMeasurementGroup();
+//  auto &measurementMap = measurementGroup.map;
 
-  MeasurmentInfo &info = measurmentMap[measurmentGroup.parentKey];
+#ifdef BENCHMARK_FIX_NESTING
+  removeRepeatMeasurements(identifier, group);
+#endif
+
+  MeasurementInfo &info = *group.getLast(identifier);
   if (info.lastStartTime > 0) {
-    errorMsg.update("Benchmark already run for \"" + measurmentGroup.parentKey + "\" key", file, line);
+    std::string fullPath = joined(group.measureKey);
+    errorMsg.update("Benchmark already run for \"" + fullPath + "\" key", file, line);
     return true;
   }
-
   info.lastStartTime = get_timestamp();
 #endif
   return true;
 }
 
-static
-void failWrongNestingKey(const std::string &fullPath, const std::string &idetifier, const std::string &file, int line) {
-  auto keyFromIdx = fullPath.find_last_of(kNestingString);
-  std::string lastKeyPath;
-  if (keyFromIdx == std::string::npos) {
-    lastKeyPath = fullPath;
-  } else {
-    lastKeyPath = fullPath.substr(keyFromIdx+1);
-  }
-  std::string msg = "benchmarkStop(\"" + idetifier + "\") not matched with last key \"" + lastKeyPath + "\"";
-  errorMsg.update(msg, file, line);
-}
-
 void benchmarkStop(const std::string &identifier, const std::string &file, int line) {
 #ifndef BENCHMARK_DISABLED
-  auto &measurmentGroup = getMeasurmentGroup();
-  auto &measurmentMap = measurmentGroup.map;
+  auto &group = getMeasurementGroup();
 
-  if (!stringHasSuffix(measurmentGroup.parentKey, identifier)) {
-    failWrongNestingKey(measurmentGroup.parentKey, identifier, file, line);
+  if (group.measureKey.size() == 0 || group.measureKey.back() != identifier) {
+    std::string lastKey = group.measureKey.empty() ? "" : group.measureKey.back();
+    std::string msg = "benchmarkStop(\"" + identifier + "\") not matched with last key \"" + lastKey + "\"";
+    errorMsg.update(msg, file, line);
     return;
   }
 
-  if (measurmentMap.count(measurmentGroup.parentKey) == 0) {
-    errorMsg.update("Internal error. Missing \"" + measurmentGroup.parentKey + "\" key", file, line);
-    return;
-  }
-  MeasurmentInfo &info = measurmentMap[measurmentGroup.parentKey];
+  MeasurementInfo &info = *(group.getLast());
   if (info.lastStartTime == 0) {
-    errorMsg.update("Benchmark for \"" + measurmentGroup.parentKey + "\" key not started", file, line);
+    std::string fullPath = joined(group.measureKey);
+    errorMsg.update("Benchmark for \"" + fullPath + "\" key not started", file, line);
     return;
   }
 
-  long toIdx = (long)measurmentGroup.parentKey.length() - (long)identifier.length() - (long)kNestingString.length();
-  measurmentGroup.parentKey = measurmentGroup.parentKey.substr(0, std::max((long)0, toIdx));
+  group.measureKey.pop_back();
 
   auto dt = get_timestamp() - info.lastStartTime;
   auto ts = info.lastStartTime;
@@ -319,7 +218,7 @@ void benchmarkStop(const std::string &identifier, const std::string &file, int l
   info.lastNTimes[info.startNTimesIdx % CAPTURE_LAST_N_TIMES] = time;
   info.startNTimesIdx++;
   if (tracing) {
-    tracing->saveTrace({identifier, measurmentGroup.tid, ts, dt, (int)measurmentGroup.parentKey.length()});
+    tracing->saveTrace({identifier, group.tid, ts, dt, (int)group.measureKey.size()});
   }
 #endif
 }
@@ -327,13 +226,13 @@ void benchmarkStop(const std::string &identifier, const std::string &file, int l
 void benchmarkReset() {
 #ifndef BENCHMARK_DISABLED
   std::lock_guard<std::mutex> lock(mut);
-  for (auto &kv : measurmentThreadMap) {
+  for (auto &kv : measurementThreadMap) {
     auto &map = kv.second->map;
     for (auto it = map.begin(); it != map.end(); ) {
       if (it->second.lastStartTime == 0) {
         // reset info for non finished benchmarks
         auto lastStartTime = it->second.lastStartTime;
-        it->second = MeasurmentInfo();
+        it->second = MeasurementInfo();
         it->second.lastStartTime = lastStartTime;
         it = map.erase(it);
       } else {
@@ -343,10 +242,10 @@ void benchmarkReset() {
     }
   }
 
-  for (auto it = measurmentThreadMap.begin(); it != measurmentThreadMap.end(); ) {
+  for (auto it = measurementThreadMap.begin(); it != measurementThreadMap.end(); ) {
     if (it->second->map.empty()) {
       // no measurments for thread, cleanup
-      it = measurmentThreadMap.erase(it);
+      it = measurementThreadMap.erase(it);
     } else {
       ++it;
     }
@@ -354,134 +253,96 @@ void benchmarkReset() {
 #endif
 }
 
-// Out measurments
-
-static
-double getTotalExecutionTime(const std::vector<std::pair<std::string, MeasurmentInfo>> &measureVector) {
-#ifndef BENCHMARK_DISABLED
-  int count = static_cast<int>(measureVector.size());
-  std::vector<int> parents(measureVector.size(), -2);
-
-  for (int j = 0; j < count; j++) {
-    std::string prefix = measureVector[j].first + kNestingString;
-
-    for (int i = 0; i < count; i++) {
-      if (i == j || !stringHasPrefix(measureVector[i].first, prefix))
-        continue;
-
-      parents[i] = j;
-    }
-  }
-
+// Out measurements
+/// В этом классе собираем конечные замеры перед переводом в табличное представление
+struct MeasurementInfoOut {
   double totalTime = 0;
-  for (int i = 0; i < count; i++) {
-    if (parents[i] < 0)
-      totalTime += measureVector[i].second.totalTime;
-  }
-  return totalTime;
-#else
-  return 0;
-#endif
-}
-
-static
-void sortAsThree(std::vector<std::pair<std::string, MeasurmentInfo>> &measureVector, bool skipPrefix = true) {
-#ifndef BENCHMARK_DISABLED
-  // make Tree structure
-  int count = (int)measureVector.size();
-
-  std::vector<int> levels(measureVector.size(), 0);
-  std::vector<int> parents(measureVector.size(), -2);
-  std::vector<std::string> origNames(measureVector.size());
-
-  int maxLevel = 0;
-  for (int j = 0; j < count; j++) {
-    std::string prefix = measureVector[j].first;
-    origNames[j] = prefix;
-    prefix += kNestingString;
-
-    for (int i = 0; i < count; i++) {
-      if (i == j || !stringHasPrefix(measureVector[i].first, prefix))
-        continue;
-
-      levels[i]++;
-      parents[i] = j;
-      if (levels[i] > maxLevel)
-        maxLevel = levels[i];
+  double childrenTime = 0;
+  double lastTime = 0;
+  double currentRunningTime = 0;
+  unsigned long timesExecuted = 0;
+  std::unordered_map<std::string, MeasurementInfoOut> children;
+  std::vector<std::string> childrenOrder; // нам нужна сортировка по занятому времени
+  
+  void fill(const MeasurementInfo &info, bool captureLast, bool captureCurrentRunning) {
+    totalTime = info.totalTime;
+    timesExecuted = info.timesExecuted;
+    childrenTime = 0;
+    for (const auto &keyVal: info.children) {
+      childrenTime += keyVal.second.totalTime;
     }
-  }
+    
+    if (captureLast) {
+      double lastTimesTotal = 0;
+      unsigned long lastCount = std::min(info.startNTimesIdx, (unsigned long)CAPTURE_LAST_N_TIMES);
+      for (unsigned long i = 0; i < lastCount; i++)
+        lastTimesTotal += info.lastNTimes[i];
 
-  // save level indentation, remove parent names
-  for (int i = 0; i < count; i++) {
-    std::string name = measureVector[i].first;
-    if (skipPrefix && parents[i] >= 0) {
-      size_t from = origNames[parents[i]].size();
-      from += kNestingString.size();
-      name = name.substr(from);
-      measureVector[parents[i]].second.childrenTime += measureVector[i].second.totalTime;
-    }
-
-    measureVector[i].second.level = levels[i];
-    measureVector[i].first = name;
-  }
-
-  // save exchange order, and then do exchange
-  std::vector<int> order(count);
-  for (int i = 0; i < count; i++)
-    order[i] = i;
-
-  for (int level = 1; level <= maxLevel; level++) {
-    for (int i = count - 1; i >= 0; i--) {
-      int origIdx = order[i];
-      if (levels[origIdx] != level)
-        continue;
-
-      int parentIdx = -1;
-      for (int k = 0; k < count; k++) {
-        if (parents[origIdx] == order[k])
-          parentIdx = k;
-      }
-      int toIdx = parentIdx + 1;
-      if (toIdx > i) toIdx--;
-      std::pair<std::string, MeasurmentInfo> measure = measureVector[i];
-      measureVector.erase(measureVector.begin() + i);
-      measureVector.insert(measureVector.begin() + toIdx, measure);
-
-      int orderVal = order[i];
-      order.erase(order.begin() + i);
-      order.insert(order.begin() + toIdx, orderVal);
-
-      levels[origIdx] = 0;
-      i++;
-    }
-  }
-#endif
-}
-
-static
-std::unordered_map<std::string, MeasurmentInfo> unionMeasurments() {
-//  объеденяем все замеры в один результат
-  if (measurmentThreadMap.empty()) {
-    return {};
-  }
-  std::unordered_map<std::string, MeasurmentInfo> res;
-  for (auto &threadMeasurments : measurmentThreadMap) {
-    const auto &measurmentsMap = threadMeasurments.second->map;
-    if (res.empty()) {
-      res = measurmentsMap;
+      lastTime = lastCount == 0 ? 0.0 : (lastTimesTotal / (double)lastCount);
     } else {
-      for (const auto &measure: measurmentsMap) {
-        if (res.count(measure.first) == 0) {
-          res[measure.first] = measure.second;
-        } else {
-          auto &destMeasure = res[measure.first];
-          destMeasure.totalTime += measure.second.totalTime;
-          destMeasure.timesExecuted += measure.second.timesExecuted;
-        }
+      lastTime = 0;
+    }
+    if (captureCurrentRunning && info.lastStartTime > 0) {
+      currentRunningTime = get_timestamp() - info.lastStartTime;
+    } else {
+      currentRunningTime = 0;
+    }
+    children.clear();
+    for (const auto &keyVal: info.children) {
+      children[keyVal.first].fill(keyVal.second, captureLast, captureCurrentRunning);
+    }
+  }
+  
+  void merge(const MeasurementInfoOut &other) {
+    totalTime += other.totalTime;
+    timesExecuted += other.timesExecuted;
+    childrenTime += other.childrenTime;
+    lastTime += other.lastTime;
+    currentRunningTime += other.currentRunningTime;
+    for (const auto &key : other.children) {
+      children[key.first].merge(key.second);
+    }
+  }
+};
+
+static
+MeasurementInfoOut unionMeasurements() {
+//  объеденяем все замеры в один результат
+  MeasurementInfoOut res;
+  MeasurementInfoOut tempChild;
+  for (auto &threadMeasurements : measurementThreadMap) {
+    const auto &measurementsMap = threadMeasurements.second->map;
+    for (const auto& keyVal : measurementsMap) {
+      const bool childExist = res.children.count(keyVal.first) > 0;
+      auto &resChild = res.children[keyVal.first];
+      if (childExist) {
+        tempChild.fill(keyVal.second, true, true);
+        resChild.merge(tempChild);
+      } else {
+        resChild.fill(keyVal.second, true, true);
       }
     }
   }
   return res;
+}
+
+static
+void sortChildren(MeasurementInfoOut &info) {
+  info.childrenOrder.clear();
+  for (auto &keyVal: info.children) {
+    info.childrenOrder.push_back(keyVal.first);
+  }
+  sort(info.childrenOrder.begin(), info.childrenOrder.end(),
+       [info](const std::string &a, const std::string &b) -> bool {
+         return info.children.at(a).totalTime > info.children.at(b).totalTime;
+       });
+  
+  // recursive
+  for (auto &keyVal: info.children) {
+    if (!keyVal.second.children.empty()) {
+      sortChildren(keyVal.second);
+    }
+  }
 }
 
 static
@@ -515,18 +376,29 @@ inline std::string formatString(std::stringstream &ss, T val) {
   return ss.str();
 }
 
-void generateTableOutput(const std::vector <std::pair<std::string, MeasurmentInfo>> &measureVector, const Field &withoutFields,
-                           double totalExecutionTime, std::ostream &out);
-void generateJsonOutput(const std::vector <std::pair<std::string, MeasurmentInfo>> &measureVector, const Field &withoutFields,
-                           double totalExecutionTime, std::ostream &out);
+static void generateTableOutput(const MeasurementInfoOut &root, const Field &withoutFields, std::ostream &out);
+static void generateJsonOutput(const MeasurementInfoOut &root, const Field &withoutFields, std::ostream &out);
+inline std::string generateError(const std::string &msg, Format format) {
+  std::string result;
+  switch (format) {
+    case Format::table:
+      result += "\n=============== Benchmark Error ===============\n";
+      result += msg;
+      result += "\n===============================================\n";
+      break;
+    case Format::json:
+      result = "{\"error\":\"" + msg + "\"}";
+      break;
+  }
+  return result;
+}
 
+struct MeasurementInfoOut;
 std::string benchmarkLog(Field withoutFields, Format format, std::ostream *out) {
 #ifndef BENCHMARK_DISABLED
   std::string errorMsgString;
   if (errorMsg.popError(errorMsgString)) {
-    std::string msg = "\n=============== Benchmark Error ===============\n";
-    msg += errorMsgString;
-    msg += "\n===============================================\n";
+    std::string msg = generateError(errorMsgString, format);
     benchmarkReset();
     if (out) {
       *out << msg;
@@ -536,128 +408,120 @@ std::string benchmarkLog(Field withoutFields, Format format, std::ostream *out) 
     }
   }
 
-  std::vector<std::pair<std::string, MeasurmentInfo>> measureVector;
+  MeasurementInfoOut root;
   {
     std::lock_guard<std::mutex> lock(mut);
-    const auto measurements = unionMeasurments();
-    for (const auto &k: measurements)
-      measureVector.emplace_back(k);
+    root = unionMeasurements();
+    sortChildren(root);
   }
-
-  sort(measureVector.begin(), measureVector.end(),
-       [](const std::pair<std::string, MeasurmentInfo> &a, const std::pair<std::string, MeasurmentInfo> &b) -> bool {
-         return a.second.totalTime > b.second.totalTime;
-       });
-
-
-  double totalExecutionTime = 0;
-  totalExecutionTime = getTotalExecutionTime(measureVector);
-  sortAsThree(measureVector);
-
+  root.totalTime = 0;
+  for (const auto &keyVal : root.children) {
+    root.totalTime += keyVal.second.totalTime;
+  }
+  
   std::stringstream result;
+  bool returnEmptyString = true;
   if (out == nullptr) {
     out = &result;
+  } else {
+    returnEmptyString = false;
   }
   switch (format) {
     case Format::table:
-      generateTableOutput(measureVector, withoutFields, totalExecutionTime, *out);
+      generateTableOutput(root, withoutFields, *out);
       break;
     case Format::json:
-      generateJsonOutput(measureVector, withoutFields, totalExecutionTime, *out);
+      generateJsonOutput(root, withoutFields, *out);
       break;
   }
-  return result.str();
+  if (returnEmptyString) {
+    return "";
+  } else {
+    return result.str();
+  }
 #else
   return string();
 #endif
 }
 
-void generateTableOutput(const std::vector <std::pair<std::string, MeasurmentInfo>> &measureVector, const Field &withoutFields,
-                           double totalExecutionTime, std::ostream &out) {
-  std::vector<std::vector<std::string>> rows;
-  rows.reserve(measureVector.size());
+static void generateTableRowsRecursive(const MeasurementInfoOut &root, double totalExecutionTime, int level, const Field &withoutFields, std::vector<std::vector<std::string>> &outRows) {
+  
   std::stringstream ss;
-
-  for (auto const &k : measureVector) {
+  
+  for (const auto &key: root.childrenOrder) {
     std::vector<std::string> row;
-    row.push_back(std::string(k.second.level*2, ' ') + k.first + ":");
-
-    double totalTime = k.second.totalTime;
-    double childrenTime = k.second.childrenTime;
-    unsigned long timesExecuted = k.second.timesExecuted;
-
-    double lastTimesTotal = 0;
-    unsigned long avaiableLastMeasurmentCount = k.second.startNTimesIdx < CAPTURE_LAST_N_TIMES
-                                                    ? k.second.startNTimesIdx
-                                                    : CAPTURE_LAST_N_TIMES;
-    for (unsigned long i = 0; i < avaiableLastMeasurmentCount; i++)
-      lastTimesTotal += k.second.lastNTimes[i];
-
-    double lastTimes = avaiableLastMeasurmentCount == 0 ? 0.0 : (lastTimesTotal / (double)avaiableLastMeasurmentCount);
-    double avg = timesExecuted == 0 ? 0.0 : (totalTime / (double)timesExecuted);
-    double percent = totalExecutionTime == 0 ? 0 : totalTime / totalExecutionTime;
-    double missed = (totalExecutionTime == 0 || childrenTime == 0) ? 0 : std::max(0.0, totalTime - childrenTime) / totalExecutionTime;
-
+    row.push_back(std::string(level*2, ' ') + key + ":");
+    const auto &info = root.children.at(key);
+    
     ss << std::setprecision(2) << std::fixed;
     if (!static_cast<bool>(withoutFields & Field::total)) {
       row.emplace_back("   total:");
-      row.emplace_back(formatString(ss, totalTime / 1000.));
+      row.emplace_back(formatString(ss, info.totalTime / 1000.));
     }
     if (!static_cast<bool>(withoutFields & Field::times)) {
       row.emplace_back("   times:");
-      row.emplace_back(formatString(ss, timesExecuted));
+      row.emplace_back(formatString(ss, info.timesExecuted));
     }
     if (!static_cast<bool>(withoutFields & Field::average)) {
       row.emplace_back("   avg:");
+      double avg = info.timesExecuted == 0 ? 0.0 : (info.totalTime / (double)info.timesExecuted);
       row.emplace_back(formatString(ss, avg / 1000.));
     }
     if (!static_cast<bool>(withoutFields & Field::lastAverage)) {
       row.emplace_back("   last avg:");
-      row.emplace_back(formatString(ss, lastTimes / 1000.));
+      row.emplace_back(formatString(ss, info.lastTime / 1000.));
     }
-
+    if (!static_cast<bool>(withoutFields & Field::running)) {
+      row.emplace_back("   running:");
+      row.emplace_back(formatString(ss, info.currentRunningTime / 1000.));
+    }
+    
     ss << std::setprecision(1) << std::fixed;
     if (!static_cast<bool>(withoutFields & Field::percent)) {
       row.emplace_back("   percent:");
+      double percent = totalExecutionTime == 0 ? 0 : info.totalTime / totalExecutionTime;
       row.emplace_back(formatString(ss, int(percent * 1000) / 10.) + " %");
     }
     if (!static_cast<bool>(withoutFields & Field::percentMissed)) {
       row.emplace_back("   missed:");
+      double missed = (totalExecutionTime == 0 || info.childrenTime == 0) ? 0 : std::max(0.0, info.totalTime - info.childrenTime) / totalExecutionTime;
       row.emplace_back(formatString(ss, int(missed * 1000) / 10.) + " %");
     }
-
-    rows.push_back(move(row));
+    
+    outRows.push_back(std::move(row));
+    // мне не нравится рекурсия, но пока так; без рекурсии пока не придумал как меньше кода написать
+    if (!info.children.empty()) {
+      generateTableRowsRecursive(info, totalExecutionTime, level+1, withoutFields, outRows);
+    }
   }
+}
+
+static void generateTableOutput(const MeasurementInfoOut &root, const Field &withoutFields, std::ostream &out) {
+  std::vector<std::vector<std::string>> rows;
+  generateTableRowsRecursive(root, root.totalTime, 0, withoutFields, rows);
 
   out << "\n================== Benchmark ==================\n";
   formGrid(rows, out);
   out << "===============================================\n";
 }
 
-void generateJsonOutput(const std::vector <std::pair<std::string, MeasurmentInfo>> &measureVector, const Field &withoutFields,
-                        double totalExecutionTime, std::ostream &out) {
+static void generateJsonOutput(const MeasurementInfoOut &root, double totalExecutionTime, const Field &withoutFields, std::ostream &out) {
   std::stringstream ss;
 
-  for (size_t i = 0; i < measureVector.size(); i++) {
-    const auto &name = measureVector[i].first;
-    const auto &info = measureVector[i].second;
+  out << "[";
+  for (size_t i = 0; i < root.childrenOrder.size(); i++) {
+    const auto &name = root.childrenOrder[i];
+    const auto &info = root.children.at(name);
     if (i == 0) {
-      out << "[{";
+      out << "{";
+    } else {
+      out << ",{";
     }
 
     double totalTime = info.totalTime;
     double childrenTime = info.childrenTime;
     unsigned long timesExecuted = info.timesExecuted;
 
-    double lastTimesTotal = 0;
-    unsigned long availableLastMeasurementCount = info.startNTimesIdx < CAPTURE_LAST_N_TIMES
-                                                ? info.startNTimesIdx
-                                                : CAPTURE_LAST_N_TIMES;
-    for (unsigned long ii = 0; ii < availableLastMeasurementCount; ii++)
-      lastTimesTotal += info.lastNTimes[ii];
-
-    double lastTimes =
-            availableLastMeasurementCount == 0 ? 0.0 : (lastTimesTotal / (double) availableLastMeasurementCount);
     double avg = timesExecuted == 0 ? 0.0 : (totalTime / (double) timesExecuted);
     double percent = totalExecutionTime == 0 ? 0 : totalTime / totalExecutionTime;
     double missed = (totalExecutionTime == 0 || childrenTime == 0) ? 0 : std::max(0.0, totalTime - childrenTime) /
@@ -666,7 +530,7 @@ void generateJsonOutput(const std::vector <std::pair<std::string, MeasurmentInfo
     ss << std::setprecision(2) << std::fixed;
     out << "\"name\":\"" << name << "\"";
     if (!static_cast<bool>(withoutFields & Field::total)) {
-      out << "\"total\":" << formatString(ss, totalTime / 1000.);
+      out << ",\"total\":" << formatString(ss, totalTime / 1000.);
     }
     if (!static_cast<bool>(withoutFields & Field::times)) {
       out << ",\"times\":" << formatString(ss, timesExecuted);
@@ -675,7 +539,10 @@ void generateJsonOutput(const std::vector <std::pair<std::string, MeasurmentInfo
       out << ",\"avg\":" << formatString(ss, avg / 1000.);
     }
     if (!static_cast<bool>(withoutFields & Field::lastAverage)) {
-      out << ",\"last avg\":" << formatString(ss, avg / 1000.);
+      out << ",\"last avg\":" << formatString(ss, info.lastTime / 1000.);
+    }
+    if (!static_cast<bool>(withoutFields & Field::running)) {
+      out << ",\"running\":" << formatString(ss, info.currentRunningTime / 1000.);
     }
 
     ss << std::setprecision(1) << std::fixed;
@@ -686,28 +553,17 @@ void generateJsonOutput(const std::vector <std::pair<std::string, MeasurmentInfo
       out << ",\"missed\":" << formatString(ss, int(missed * 1000) / 10.);
     }
 
-    // make children nesting
-    if (i+1 == measureVector.size()) {
+    if (info.children.empty()) {
       out << "}";
-      for (int l = 0; l < info.level; l++) {
-        out << "]}";
-      }
     } else {
-      auto nextLevel = measureVector[i+1].second.level;
-      if (nextLevel > info.level) {
-        out << ",\"children\":[{";
-      } else if (nextLevel == info.level) {
-        out << "},{";
-      } else { // nextLevel < info.level; // close previous children
-        out << "}";
-        for (int l = 0; l < info.level - nextLevel; l++) {
-          out << "]}";
-        }
-        out << ",{";
-      }
+      out << ",\"children\":";
+      generateJsonOutput(info, totalExecutionTime, withoutFields, out);
     }
   }
   out << "]";
+}
+static void generateJsonOutput(const MeasurementInfoOut &root, const Field &withoutFields, std::ostream &out) {
+  generateJsonOutput(root, root.totalTime, withoutFields, out);
 }
 
 void benchmarkStartTracing(const std::string &writeJsonPath, const std::string &file, int line) {
