@@ -47,7 +47,6 @@ struct MeasurementInfo {
   timestamp_t lastStartTime = 0;
   double lastNTimes[CAPTURE_LAST_N_TIMES] = {};
   unsigned long startNTimesIdx = 0;
-  uint16_t level = 0;
   MeasurementMap children;
   
   /// нам нужна сортировка по занятому времени, используется только при выводе результата
@@ -105,18 +104,6 @@ private:
   std::mutex mut_;
   std::string msg_;
 };
-
-inline bool stringHasSuffix(std::string const &value, std::string const &suffix) {
-  if (suffix.size() > value.size()) return false;
-  return std::equal(suffix.rbegin(), suffix.rend(), value.rbegin());
-}
-
-inline bool stringHasPrefix(const std::string& str, const std::string& prefix) {
-    if (prefix.size() > str.size()) return false;
-
-    auto res = mismatch(prefix.begin(), prefix.end(), str.begin());
-    return res.first == prefix.end();
-}
 
 // without unique_ptr this map fails on Win machine
 static std::unordered_map<std::thread::id, std::unique_ptr<MeasurementGroup>> measurementThreadMap;
