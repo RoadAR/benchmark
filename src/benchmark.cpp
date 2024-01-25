@@ -380,11 +380,11 @@ std::string benchmarkLog(Field withoutFields, Format format, std::ostream *out) 
   }
   
   std::stringstream result;
-  bool returnEmptyString = true;
+  bool returnEmptyString = false;
   if (out == nullptr) {
     out = &result;
   } else {
-    returnEmptyString = false;
+    returnEmptyString = true;
   }
   switch (format) {
     case Format::table:
