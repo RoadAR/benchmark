@@ -250,7 +250,7 @@ struct MeasurementInfoOut {
       if (children.count(keyVal.first) == 0) {
         children[keyVal.first] = std::unique_ptr<MeasurementInfoOut>(new MeasurementInfoOut());
       }
-      children[keyVal.first]->fill(*keyVal.second, captureLast, captureCurrentRunning);
+      children.at(keyVal.first)->fill(*keyVal.second, captureLast, captureCurrentRunning);
     }
   }
   
@@ -261,7 +261,10 @@ struct MeasurementInfoOut {
     lastTime += other.lastTime;
     currentRunningTime += other.currentRunningTime;
     for (const auto &key : other.children) {
-      children[key.first]->merge(*key.second);
+      if (children.count(key.first) == 0) {
+        children[key.first] = std::unique_ptr<MeasurementInfoOut>(new MeasurementInfoOut());
+      }
+      children.at(key.first)->merge(*key.second);
     }
   }
 };
