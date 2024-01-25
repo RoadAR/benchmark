@@ -4,6 +4,9 @@
 #include <string>
 #include <fstream>
 #include <thread>
+#include <mutex>
+#include <vector>
+#include <unordered_map>
 
 namespace roadar {
 namespace Tracing {

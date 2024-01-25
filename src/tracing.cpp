@@ -1,12 +1,7 @@
-//
-//  tracing.cpp
-//  TestBenchmark
-//
-//  Created by Alexander Graschenkov on 24.01.2024.
-//
-
 #include <roadar/tracing.hpp>
 #include <sstream>
+#include <algorithm>
+#include <iomanip>
 
 namespace roadar {
 namespace Tracing {

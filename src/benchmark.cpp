@@ -27,7 +27,9 @@ namespace roadar {
 
 typedef unsigned long long timestamp_t;
 struct MeasurementInfo;
-typedef std::unordered_map<std::string, MeasurementInfo> MeasurementMap;
+/// К сожалению старая версия  GCC не поддерживает вложенность структур для создания деревьев
+/// Не на всех проектах есть возможность обновить GCC
+typedef std::unordered_map<std::string, std::unique_ptr<MeasurementInfo>> MeasurementMap;
 
 #ifndef BENCHMARK_DISABLED
   static timestamp_t get_timestamp() {
@@ -48,16 +50,13 @@ struct MeasurementInfo {
   double lastNTimes[CAPTURE_LAST_N_TIMES] = {};
   unsigned long startNTimesIdx = 0;
   MeasurementMap children;
-  
-  /// нам нужна сортировка по занятому времени, используется только при выводе результата
-  std::vector<std::string> childrenOrder;
 };
 
 struct MeasurementGroup {
   MeasurementGroup() = default;
-  MeasurementGroup(MeasurementGroup const &val) {
-    map = val.map;
-  };
+//  MeasurementGroup(MeasurementGroup const &val) {
+//    map = val.map;
+//  };
   MeasurementMap map = {};
   std::thread::id tid;
   std::vector<std::string> measureKey;
@@ -66,12 +65,15 @@ struct MeasurementGroup {
     MeasurementMap *mapRef = &map;
     MeasurementInfo *info = nullptr;
     for (const auto &key : measureKey) {
-      info = &(mapRef->at(key));
+      info = mapRef->at(key).get();
       mapRef = &(info->children);
     }
 
     if (!addNewKey.empty()) {
-      info = &(*mapRef)[addNewKey];
+      if ((*mapRef).count(addNewKey) == 0) {
+        (*mapRef)[addNewKey] = std::unique_ptr<MeasurementInfo>(new MeasurementInfo());
+      }
+      info = (*mapRef)[addNewKey].get();
       measureKey.push_back(addNewKey);
     }
     return info;
@@ -182,17 +184,18 @@ void benchmarkReset() {
 #ifndef BENCHMARK_DISABLED
   std::lock_guard<std::mutex> lock(mut);
   for (auto &kv : measurementThreadMap) {
-    auto &map = kv.second->map;
-    for (auto it = map.begin(); it != map.end(); ) {
-      if (it->second.lastStartTime == 0) {
-        // reset info for non finished benchmarks
-        auto lastStartTime = it->second.lastStartTime;
-        it->second = MeasurementInfo();
-        it->second.lastStartTime = lastStartTime;
-        it = map.erase(it);
-      } else {
-        // remove all finished benchmarks
-        ++it;
+    std::vector<MeasurementMap *> cleanupMap = {&(kv.second->map)};
+    
+    for (size_t idx = 0; idx < cleanupMap.size(); idx++) {
+      auto map = cleanupMap[idx];
+      for (auto it = map->begin(); it != map->end(); ) {
+        if (it->second->lastStartTime == 0) {
+          // reset info for non finished benchmarks
+          it = map->erase(it);
+        } else {
+          cleanupMap.push_back(&(it->second->children));
+          ++it;
+        }
       }
     }
   }
@@ -216,7 +219,7 @@ struct MeasurementInfoOut {
   double lastTime = 0;
   double currentRunningTime = 0;
   unsigned long timesExecuted = 0;
-  std::unordered_map<std::string, MeasurementInfoOut> children;
+  std::unordered_map<std::string, std::unique_ptr<MeasurementInfoOut>> children;
   std::vector<std::string> childrenOrder; // нам нужна сортировка по занятому времени
   
   void fill(const MeasurementInfo &info, bool captureLast, bool captureCurrentRunning) {
@@ -224,7 +227,7 @@ struct MeasurementInfoOut {
     timesExecuted = info.timesExecuted;
     childrenTime = 0;
     for (const auto &keyVal: info.children) {
-      childrenTime += keyVal.second.totalTime;
+      childrenTime += keyVal.second->totalTime;
     }
     
     if (captureLast) {
@@ -244,7 +247,10 @@ struct MeasurementInfoOut {
     }
     children.clear();
     for (const auto &keyVal: info.children) {
-      children[keyVal.first].fill(keyVal.second, captureLast, captureCurrentRunning);
+      if (children.count(keyVal.first) == 0) {
+        children[keyVal.first] = std::unique_ptr<MeasurementInfoOut>(new MeasurementInfoOut());
+      }
+      children[keyVal.first]->fill(*keyVal.second, captureLast, captureCurrentRunning);
     }
   }
   
@@ -255,7 +261,7 @@ struct MeasurementInfoOut {
     lastTime += other.lastTime;
     currentRunningTime += other.currentRunningTime;
     for (const auto &key : other.children) {
-      children[key.first].merge(key.second);
+      children[key.first]->merge(*key.second);
     }
   }
 };
@@ -268,13 +274,12 @@ MeasurementInfoOut unionMeasurements() {
   for (auto &threadMeasurements : measurementThreadMap) {
     const auto &measurementsMap = threadMeasurements.second->map;
     for (const auto& keyVal : measurementsMap) {
-      const bool childExist = res.children.count(keyVal.first) > 0;
-      auto &resChild = res.children[keyVal.first];
-      if (childExist) {
-        tempChild.fill(keyVal.second, true, true);
-        resChild.merge(tempChild);
+      if (res.children.count(keyVal.first) > 0) {
+        tempChild.fill(*keyVal.second, true, true);
+        res.children.at(keyVal.first)->merge(tempChild);
       } else {
-        resChild.fill(keyVal.second, true, true);
+        res.children[keyVal.first] = std::unique_ptr<MeasurementInfoOut>(new MeasurementInfoOut());
+        res.children.at(keyVal.first)->fill(*keyVal.second, true, true);
       }
     }
   }
@@ -288,14 +293,14 @@ void sortChildren(MeasurementInfoOut &info) {
     info.childrenOrder.push_back(keyVal.first);
   }
   sort(info.childrenOrder.begin(), info.childrenOrder.end(),
-       [info](const std::string &a, const std::string &b) -> bool {
-         return info.children.at(a).totalTime > info.children.at(b).totalTime;
+       [&info](const std::string &a, const std::string &b) -> bool {
+         return info.children.at(a)->totalTime > info.children.at(b)->totalTime;
        });
   
   // recursive
   for (auto &keyVal: info.children) {
-    if (!keyVal.second.children.empty()) {
-      sortChildren(keyVal.second);
+    if (!keyVal.second->children.empty()) {
+      sortChildren(*keyVal.second);
     }
   }
 }
@@ -371,7 +376,7 @@ std::string benchmarkLog(Field withoutFields, Format format, std::ostream *out) 
   }
   root.totalTime = 0;
   for (const auto &keyVal : root.children) {
-    root.totalTime += keyVal.second.totalTime;
+    root.totalTime += keyVal.second->totalTime;
   }
   
   std::stringstream result;
@@ -395,7 +400,7 @@ std::string benchmarkLog(Field withoutFields, Format format, std::ostream *out) 
     return result.str();
   }
 #else
-  return string();
+  return std::string();
 #endif
 }
 
@@ -406,7 +411,7 @@ static void generateTableRowsRecursive(const MeasurementInfoOut &root, double to
   for (const auto &key: root.childrenOrder) {
     std::vector<std::string> row;
     row.push_back(std::string(level*2, ' ') + key + ":");
-    const auto &info = root.children.at(key);
+    const auto &info = *root.children.at(key);
     
     ss << std::setprecision(2) << std::fixed;
     if (!static_cast<bool>(withoutFields & Field::total)) {
@@ -466,7 +471,7 @@ static void generateJsonOutput(const MeasurementInfoOut &root, double totalExecu
   out << "[";
   for (size_t i = 0; i < root.childrenOrder.size(); i++) {
     const auto &name = root.childrenOrder[i];
-    const auto &info = root.children.at(name);
+    const auto &info = *root.children.at(name);
     if (i == 0) {
       out << "{";
     } else {
